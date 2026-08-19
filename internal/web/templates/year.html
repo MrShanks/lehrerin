@@ -1,0 +1,10 @@
+{{define "year"}}
+<section class="page-heading">
+  <div><p class="eyebrow">Year overview</p><h1>School year {{.SchoolYear}}</h1><p class="lede">{{.YearStart}} to {{.YearEnd}} · Choose any school day to open its agenda.</p></div>
+  <a class="primary button-link" href="/schedule">Edit weekly timetable</a>
+</section>
+<section class="year-grid" aria-label="School year calendar">
+  <div class="year-row year-head"><strong>Week</strong><strong>Monday</strong><strong>Tuesday</strong><strong>Wednesday</strong><strong>Thursday</strong><strong>Friday</strong></div>
+  {{range .Weeks}}<div class="year-row"><strong class="week-number">W{{.Number}}</strong>{{range .Days}}<a href="/?date={{.Date}}"{{if .Overridden}} class="year-day-overridden"{{end}}><span>{{.Day}}</span><strong>{{.Number}}</strong>{{if .EventCount}}<small>{{.EventCount}} event{{if ne .EventCount 1}}s{{end}}</small>{{end}}</a>{{end}}</div>{{end}}
+</section>
+{{end}}

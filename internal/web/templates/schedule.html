@@ -1,0 +1,41 @@
+{{define "schedule"}}
+<section class="page-heading">
+  <div><p class="eyebrow">Reusable defaults</p><h1>Weekly timetable</h1><p class="lede">Set your usual lessons once. New daily agendas inherit these details and can still be changed independently.</p></div>
+  <button class="secondary" type="button" command="show-modal" commandfor="settings-dialog">Planner settings</button>
+</section>
+<form id="schedule-form" data-dirty-form hx-post="/schedule" hx-target="#schedule-tabs" hx-swap="outerHTML">
+  <div class="schedule-save-bar">
+    <span class="unsaved-hint" data-dirty-hint hidden>Unsaved changes</span>
+    <button class="secondary" type="reset">Discard changes</button>
+    <button class="primary" type="submit">Save timetable</button>
+  </div>
+  {{template "schedule-tabs" .}}
+</form>
+<dialog id="settings-dialog">
+  <form class="settings-form" hx-post="/settings">
+    <div class="dialog-heading"><div><p class="eyebrow">Configuration</p><h2>Planner settings</h2></div><button class="icon-button" type="button" command="close" commandfor="settings-dialog" aria-label="Close">×</button></div>
+    <div class="form-row"><label>Teacher<input name="teacher" value="{{.Teacher}}"></label><label>School<input name="school" value="{{.School}}"></label></div>
+    <div class="form-row"><label>Subjects, one per line<textarea name="subjects" rows="10">{{range .Subjects}}{{.}}
+{{end}}</textarea></label><label>Classes, one per line<textarea name="classes" rows="10">{{range .Classes}}{{.}}
+{{end}}</textarea></label></div>
+    <button class="primary" type="submit">Save settings</button>
+  </form>
+</dialog>
+{{end}}
+
+{{define "schedule-tabs"}}
+<section class="schedule-tabs" id="schedule-tabs">
+  {{range .Weekdays}}
+  <details class="schedule-day" {{if eq . "Monday"}}open{{end}}>
+    <summary><strong>{{.}}</strong><span>Edit 9 lesson slots</span><span class="chevron">⌄</span></summary>
+    {{$weekday := .}}<div class="schedule-rows">{{range (index $.Schedule .)}}{{template "schedule-row" (scheduleData $weekday .)}}{{end}}</div>
+  </details>
+  {{end}}
+</section>
+{{end}}
+
+{{define "schedule-row"}}
+<div class="schedule-row" id="schedule-{{.Weekday}}-{{.Slot.Number}}">
+  <span class="lesson-number">{{.Slot.Number}}</span><label>Time<input name="{{.Weekday}}-{{.Slot.Number}}-time" data-dirty-field value="{{.Slot.Time}}"></label><label>Subject<input name="{{.Weekday}}-{{.Slot.Number}}-subject" data-dirty-field list="subjects" value="{{.Slot.Subject}}" placeholder="Open"></label><label>Class<input name="{{.Weekday}}-{{.Slot.Number}}-class" data-dirty-field list="classes" value="{{.Slot.Class}}" placeholder="Open"></label><label>Default topic<input name="{{.Weekday}}-{{.Slot.Number}}-topic" data-dirty-field value="{{.Slot.Topic}}" placeholder="Optional"></label>
+</div>
+{{end}}

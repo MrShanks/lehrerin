@@ -1,0 +1,111 @@
+{{define "notes"}}
+<section class="page-heading">
+  <div><p class="eyebrow">Lesson log</p><h1>Notes</h1><p class="lede">Everything you've flagged during lessons, most recent first. Click a note to jump back to that day.</p></div>
+</section>
+{{if .Notes}}
+<div class="notes-search">
+  <input type="search" id="notes-search" placeholder="Search notes…" aria-label="Search notes">
+</div>
+<div class="notes-list" id="notes-list">
+  {{range .Notes}}
+  <a class="note-card" href="/?date={{.Date}}#lesson-{{.SlotNumber}}" data-search="{{.DateLabel}} {{.Subject}} {{.Class}} {{.Topic}} {{.Text}}">
+    <div class="note-meta"><span>{{.DateLabel}}</span><span>{{.Time}}</span></div>
+    <div class="note-lesson">{{if .Subject}}{{.Subject}}{{else}}Open lesson{{end}}{{if .Class}} · Class {{.Class}}{{end}}{{if .Topic}} · {{.Topic}}{{end}}</div>
+    <p class="note-text">{{.Text}}</p>
+  </a>
+  {{end}}
+</div>
+<p class="empty-state" id="notes-empty" hidden>No notes match your search.</p>
+<script>
+  (function () {
+    const input = document.getElementById('notes-search');
+    const cards = Array.from(document.querySelectorAll('#notes-list .note-card'));
+    const empty = document.getElementById('notes-empty');
+    if (!input || !empty) return;
+
+    // Subsequence-based fuzzy score: every query character must appear, in
+    // order, in the target word. Returns null when there's no match, otherwise
+    // a score where higher is better (rewards consecutive runs and early matches).
+    // Matches are rejected if they're too spread out across the word (e.g. "thi"
+    // loosely scattered inside "Mathematics"), so only near-contiguous / typo-level
+    // fuzziness is accepted rather than any arbitrary scavenged subsequence.
+    function fuzzyScore(query, target) {
+      let qi = 0;
+      let consecutive = 0;
+      let firstMatchIndex = -1;
+      let lastMatchIndex = -1;
+      let score = 0;
+      for (let ti = 0; ti < target.length && qi < query.length; ti++) {
+        if (target[ti] === query[qi]) {
+          if (firstMatchIndex === -1) firstMatchIndex = ti;
+          lastMatchIndex = ti;
+          consecutive += 1;
+          score += 1 + consecutive;
+          qi += 1;
+        } else {
+          consecutive = 0;
+        }
+      }
+      if (qi !== query.length) return null;
+      const span = lastMatchIndex - firstMatchIndex + 1;
+      if (span > query.length + 2) return null;
+      return score - firstMatchIndex * 0.1;
+    }
+
+    // Matching per-word (rather than across the whole concatenated haystack)
+    // keeps the fuzzy match meaningful: it stops letters from an unrelated
+    // query being "found" by scavenging characters across separate words.
+    function tokenize(text) {
+      return text.split(/[^a-z0-9]+/i).filter(Boolean);
+    }
+
+    function bestTokenScore(term, tokens) {
+      let best = null;
+      for (const token of tokens) {
+        const score = fuzzyScore(term, token);
+        if (score !== null && (best === null || score > best)) best = score;
+      }
+      return best;
+    }
+
+    function matchScore(query, haystack) {
+      const terms = query.split(/\s+/).filter(Boolean);
+      if (terms.length === 0) return 0;
+      const tokens = tokenize(haystack);
+      let total = 0;
+      for (const term of terms) {
+        const score = bestTokenScore(term, tokens);
+        if (score === null) return null;
+        total += score;
+      }
+      return total;
+    }
+
+    input.addEventListener('input', function () {
+      const query = input.value.trim().toLowerCase();
+      const ranked = cards.map(function (card, index) {
+        const score = query === '' ? 0 : matchScore(query, card.dataset.search.toLowerCase());
+        return { card: card, score: score, index: index };
+      });
+      ranked.sort(function (a, b) {
+        if (a.score === null && b.score === null) return a.index - b.index;
+        if (a.score === null) return 1;
+        if (b.score === null) return -1;
+        if (b.score !== a.score) return b.score - a.score;
+        return a.index - b.index;
+      });
+      let visibleCount = 0;
+      ranked.forEach(function (entry, order) {
+        const matches = entry.score !== null;
+        entry.card.hidden = !matches;
+        entry.card.style.order = order;
+        if (matches) visibleCount += 1;
+      });
+      empty.hidden = visibleCount !== 0;
+    });
+  })();
+</script>
+{{else}}
+<p class="empty-state">No notes yet. Add one from any lesson card in the agenda.</p>
+{{end}}
+{{end}}

@@ -1,0 +1,145 @@
+{{define "layout"}}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Lehrerin · Teacher planner</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/app.css">
+  <script src="https://cdn.jsdelivr.net/npm/htmx.org@2.0.7/dist/htmx.min.js" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Lehrerin home"><span class="brand-mark">L</span><span>lehrerin</span></a>
+    <nav aria-label="Main navigation">
+      <a href="/" {{if eq .View "agenda"}}aria-current="page"{{end}}>Agenda</a>
+      <a href="/year" {{if eq .View "year"}}aria-current="page"{{end}}>School year</a>
+      <a href="/schedule" {{if eq .View "schedule"}}aria-current="page"{{end}}>Timetable</a>
+      <a href="/notes" {{if eq .View "notes"}}aria-current="page"{{end}}>Notes</a>
+    </nav>
+    <div class="teacher"><span class="teacher-copy"><strong>{{.Teacher}}</strong><small>{{.School}}</small></span><span class="avatar">T</span></div>
+  </header>
+  <main>
+    {{if eq .View "agenda"}}{{template "agenda" .}}{{end}}
+    {{if eq .View "year"}}{{template "year" .}}{{end}}
+    {{if eq .View "schedule"}}{{template "schedule" .}}{{end}}
+    {{if eq .View "notes"}}{{template "notes" .}}{{end}}
+  </main>
+  <datalist id="subjects">{{range .Subjects}}<option value="{{.}}">{{end}}</datalist>
+  <datalist id="classes">{{range .Classes}}<option value="{{.}}">{{end}}</datalist>
+  <div id="save-toast" role="status">Saved</div>
+  <dialog id="unsaved-dialog">
+    <form method="dialog" class="unsaved-form">
+      <p>You have unsaved timetable changes. What would you like to do?</p>
+      <menu>
+        <button value="cancel">Keep editing</button>
+        <button value="discard">Discard changes</button>
+        <button class="primary" value="save">Save and continue</button>
+      </menu>
+    </form>
+  </dialog>
+  <script>
+    document.body.addEventListener('lessonSaved', function () {
+      const toast = document.getElementById('save-toast');
+      toast.classList.add('visible');
+      window.setTimeout(() => toast.classList.remove('visible'), 1200);
+    });
+
+    document.body.addEventListener('htmx:afterSwap', function (event) {
+      const swapped = event.target;
+      if (swapped && swapped.matches && swapped.matches('.lesson-card')) {
+        swapped.open = true;
+      }
+    });
+
+    (function () {
+      function openLessonFromHash() {
+        if (!location.hash) return;
+        let target;
+        try {
+          target = document.querySelector(location.hash);
+        } catch (e) {
+          return;
+        }
+        if (!target || !target.matches('.lesson-card')) return;
+        target.open = true;
+        target.classList.add('highlight');
+        target.scrollIntoView({ block: 'start' });
+        window.setTimeout(() => target.classList.remove('highlight'), 2500);
+      }
+      openLessonFromHash();
+      window.addEventListener('hashchange', openLessonFromHash);
+    })();
+
+    (function () {
+      function dirtyForm() {
+        const form = document.querySelector('[data-dirty-form]');
+        return form && form.dataset.dirty === 'true' ? form : null;
+      }
+
+      function setDirty(form, value) {
+        form.dataset.dirty = value ? 'true' : '';
+        const hint = form.querySelector('[data-dirty-hint]');
+        if (hint) hint.hidden = !value;
+      }
+
+      document.addEventListener('input', function (event) {
+        if (!event.target.matches('[data-dirty-field]')) return;
+        const form = event.target.closest('[data-dirty-form]');
+        if (form) setDirty(form, true);
+      });
+
+      document.addEventListener('reset', function (event) {
+        const form = event.target.closest('[data-dirty-form]');
+        if (form) window.setTimeout(() => setDirty(form, false), 0);
+      }, true);
+
+      document.body.addEventListener('htmx:afterRequest', function (event) {
+        const form = event.target.closest('[data-dirty-form]');
+        if (form && event.detail.successful) setDirty(form, false);
+      });
+
+      window.addEventListener('beforeunload', function (event) {
+        if (!dirtyForm()) return;
+        event.preventDefault();
+        event.returnValue = '';
+      });
+
+      const unsavedDialog = document.getElementById('unsaved-dialog');
+      let pendingHref = null;
+
+      document.addEventListener('click', function (event) {
+        if (event.button !== 0 || event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+        const link = event.target.closest('a[href]');
+        const form = dirtyForm();
+        if (!link || !form) return;
+        event.preventDefault();
+        pendingHref = link.href;
+        unsavedDialog.showModal();
+      });
+
+      unsavedDialog.addEventListener('close', function () {
+        const form = dirtyForm();
+        const choice = unsavedDialog.returnValue;
+        unsavedDialog.returnValue = '';
+        if (choice === 'save' && form) {
+          form.addEventListener('htmx:afterRequest', function handler(event) {
+            form.removeEventListener('htmx:afterRequest', handler);
+            if (event.detail.successful && pendingHref) window.location.href = pendingHref;
+          });
+          form.requestSubmit();
+        } else if (choice === 'discard') {
+          if (form) setDirty(form, false);
+          if (pendingHref) window.location.href = pendingHref;
+        }
+        pendingHref = null;
+      });
+    })();
+  </script>
+</body>
+</html>
+{{end}}

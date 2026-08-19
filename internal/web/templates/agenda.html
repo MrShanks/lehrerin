@@ -1,0 +1,207 @@
+{{define "agenda"}}
+<section class="page-heading agenda-heading">
+  <div><p class="eyebrow">Daily agenda</p><h1>{{.Date}}</h1><p class="lede">Plan each lesson from arrival to assessment, with materials and differentiation close at hand.</p></div>
+  <div class="date-controls">
+    <button class="icon-link print-button" type="button" onclick="window.print()" aria-label="Print or save as PDF">Print / PDF</button>
+    <button class="secondary" type="button" id="add-override" command="show-modal" commandfor="override-dialog">Override schedule</button>
+    <a class="icon-link" href="/?date={{.PrevDate}}{{if .SubjectFilter}}&amp;subject={{.SubjectFilter | urlquery}}{{end}}" aria-label="{{if .SubjectFilter}}Previous week{{else}}Previous school day{{end}}">←</a>
+    <form action="/" method="get"><label class="sr-only" for="date">Choose date</label><input id="date" name="date" type="date" value="{{.DateInput}}" onchange="this.form.submit()">{{if .SubjectFilter}}<input type="hidden" name="subject" value="{{.SubjectFilter}}">{{end}}</form>
+    <a class="icon-link" href="/?date={{.NextDate}}{{if .SubjectFilter}}&amp;subject={{.SubjectFilter | urlquery}}{{end}}" aria-label="{{if .SubjectFilter}}Next week{{else}}Next school day{{end}}">→</a>
+  </div>
+</section>
+<form class="subject-filter" action="/" method="get">
+  <input type="hidden" name="date" value="{{.DateInput}}">
+  <label for="subject-filter">Subject view</label>
+  <select id="subject-filter" name="subject" onchange="this.form.submit()">
+    <option value="">All subjects · daily agenda</option>
+    {{range .Subjects}}<option value="{{.}}" {{if eq . $.SubjectFilter}}selected{{end}}>{{.}}</option>{{end}}
+  </select>
+  {{if .SubjectFilter}}<a href="/?date={{.DateInput}}">Clear filter</a>{{end}}
+</form>
+<nav class="week-strip" aria-label="This week">
+  {{range .Week}}<a href="/?date={{.Date}}{{if $.SubjectFilter}}&amp;subject={{$.SubjectFilter | urlquery}}{{end}}" {{if .Selected}}aria-current="date"{{end}}><span>{{.Day}}</span><strong>{{.Number}}</strong>{{if .Today}}<small>Today</small>{{end}}</a>{{end}}
+</nav>
+{{if .SubjectFilter}}
+<section class="subject-week" aria-labelledby="subject-week-heading">
+  <div class="subject-week-heading"><div><p class="eyebrow">Weekly subject view</p><h2 id="subject-week-heading">{{.SubjectFilter}} at a glance</h2></div><span>{{.SubjectCount}} {{if eq .SubjectCount 1}}lesson{{else}}lessons{{end}} this week</span></div>
+  <div class="subject-week-grid">
+    {{range .SubjectWeek}}
+    <section class="subject-day">
+      <a class="subject-day-heading" href="/?date={{.Date}}"><span>{{.Day}}</span><strong>{{.Number}}</strong><small>{{.LessonCount}} {{if eq .LessonCount 1}}lesson{{else}}lessons{{end}}</small></a>
+      <div class="subject-day-lessons">
+        {{$dayDate := .Date}}{{range .Lessons}}<a class="subject-lesson{{if .Complete}} complete{{end}}" href="/?date={{$dayDate}}#lesson-{{.Slot.Number}}"><span>{{.Slot.Time}}</span><strong>{{if .Slot.Class}}Class {{.Slot.Class}}{{else}}No class{{end}}</strong><small>{{if .Slot.Topic}}{{.Slot.Topic}}{{else}}Lesson {{.Slot.Number}}{{end}}</small></a>{{else}}<p>No {{$.SubjectFilter}} lessons</p>{{end}}
+      </div>
+    </section>
+    {{end}}
+  </div>
+</section>
+{{else if .Overridden}}
+<section class="day-override-list">
+  {{range .Overrides}}
+  <div class="day-override">
+    <p class="eyebrow">Special day</p>
+    <h2>{{.Title}}</h2>
+    {{if .Notes}}<p class="lede">{{.Notes}}</p>{{end}}
+    {{if .Activities}}
+    <div class="activity-table" role="table" aria-label="Activities">
+      <div class="activity-head" role="row"><span>Time</span><span>Activity</span><span>Material</span><span>Description</span><span>Notes</span></div>
+      {{range .Activities}}
+      <div class="activity-row" role="row"><span>{{.Time}}</span><span>{{.Name}}</span><span>{{.Material}}</span><span>{{.Description}}</span><span>{{.Notes}}</span></div>
+      {{end}}
+    </div>
+    {{end}}
+    <div class="day-override-actions">
+      <button class="secondary" type="button" data-edit-event data-index="{{.Index}}" data-title="{{.Title}}" data-notes="{{.Notes}}" data-activities="{{.Activities | toJSON}}">Edit event</button>
+      <form hx-post="/agenda/{{$.DateInput}}/override/{{.Index}}/clear">
+        <button class="secondary" type="submit">Remove event</button>
+      </form>
+    </div>
+  </div>
+  {{end}}
+</section>
+{{else}}
+<section class="agenda-workspace">
+  <div class="agenda-summary">
+    <div><span>Lessons planned</span><strong>{{.TotalCount}}</strong></div>
+    <div><span>Ready to teach</span><strong>{{.DoneCount}}</strong></div>
+    <progress max="{{.TotalCount}}" value="{{.DoneCount}}">{{.DoneCount}} of {{.TotalCount}}</progress>
+  </div>
+  <div class="lesson-stack">
+    {{range .Lessons}}
+      {{template "lesson-card" (lessonData $.DateInput . $.Subjects $.Classes)}}
+      {{if eq .Slot.Number 5}}<div class="lunch-break"><span>Lunch break</span></div>{{end}}
+    {{end}}
+  </div>
+</section>
+{{end}}
+<dialog id="override-dialog">
+  <form class="settings-form" id="override-form" hx-post="/agenda/{{.DateInput}}/override">
+    <div class="dialog-heading"><div><p class="eyebrow">Special day</p><h2 id="override-dialog-heading">Replace lessons with an event</h2></div><button class="icon-button" type="button" command="close" commandfor="override-dialog" aria-label="Close">×</button></div>
+    <div class="form-row">
+      <label>Event title<input name="title" placeholder="School camp, sports day…" required></label>
+    </div>
+    <div class="form-row" id="override-date-range">
+      <label>From<input type="date" name="start" value="{{.DateInput}}" required></label>
+      <label>To<input type="date" name="end" value="{{.DateInput}}"></label>
+    </div>
+    <label>Notes<textarea name="notes" rows="4" placeholder="Optional details"></textarea></label>
+    <div class="activity-editor">
+      <div class="activity-editor-heading"><span>Activities</span><button class="secondary" type="button" id="add-activity">+ Add activity</button></div>
+      <div class="activity-table" role="table" aria-label="Activities">
+        <div class="activity-head" role="row"><span>Time</span><span>Activity</span><span>Material</span><span>Description</span><span>Notes</span></div>
+        <div id="activity-rows"></div>
+      </div>
+    </div>
+    <div class="dialog-actions">
+      <button class="primary" type="submit" id="override-submit">Save event</button>
+    </div>
+  </form>
+</dialog>
+<template id="activity-row-template">
+  <div class="activity-row" role="row">
+    <input name="activity_INDEX_time" placeholder="10:00">
+    <input name="activity_INDEX_name" placeholder="Activity name">
+    <input name="activity_INDEX_material" placeholder="Material">
+    <input name="activity_INDEX_description" placeholder="Description">
+    <input name="activity_INDEX_notes" placeholder="Notes">
+    <button class="icon-button" type="button" aria-label="Remove activity">×</button>
+  </div>
+</template>
+<script>
+  (function () {
+    const dialog = document.getElementById('override-dialog');
+    const form = document.getElementById('override-form');
+    const rows = document.getElementById('activity-rows');
+    const template = document.getElementById('activity-row-template');
+    const dateRange = document.getElementById('override-date-range');
+    const heading = document.getElementById('override-dialog-heading');
+    const submitButton = document.getElementById('override-submit');
+    let counter = 0;
+
+    function addRow(activity) {
+      activity = activity || {};
+      const row = template.content.cloneNode(true);
+      row.querySelectorAll('[name]').forEach((field) => {
+        const suffix = field.name.split('_INDEX_')[1];
+        field.name = field.name.replace('_INDEX_', '_' + counter + '_');
+        if (activity[suffix]) field.value = activity[suffix];
+      });
+      row.querySelector('[aria-label="Remove activity"]').addEventListener('click', function () {
+        this.closest('.activity-row').remove();
+      });
+      rows.appendChild(row);
+      counter += 1;
+    }
+
+    function resetForm() {
+      form.reset();
+      form.setAttribute('hx-post', '/agenda/{{.DateInput}}/override');
+      htmx.process(form);
+      dateRange.hidden = false;
+      heading.textContent = 'Replace lessons with an event';
+      submitButton.textContent = 'Save event';
+      rows.replaceChildren();
+      counter = 0;
+    }
+
+    document.getElementById('add-activity').addEventListener('click', function () {
+      addRow();
+    });
+    document.getElementById('add-override').addEventListener('click', resetForm);
+    dialog.addEventListener('close', resetForm);
+
+    document.addEventListener('click', function (event) {
+      const button = event.target.closest('[data-edit-event]');
+      if (!button) return;
+      resetForm();
+      form.elements.title.value = button.dataset.title;
+      form.elements.notes.value = button.dataset.notes;
+      form.setAttribute('hx-post', '/agenda/{{.DateInput}}/override/' + button.dataset.index + '/edit');
+      htmx.process(form);
+      dateRange.hidden = true;
+      heading.textContent = 'Edit event';
+      submitButton.textContent = 'Save changes';
+      const activities = JSON.parse(button.dataset.activities || '[]') || [];
+      activities.forEach(addRow);
+      dialog.showModal();
+    });
+  })();
+</script>
+{{end}}
+
+{{define "lesson-card"}}
+<details class="lesson-card{{if .Lesson.Complete}} complete{{end}}" id="lesson-{{.Lesson.Slot.Number}}">
+  <summary>
+    <span class="lesson-number">{{.Lesson.Slot.Number}}</span><span class="lesson-time">{{.Lesson.Slot.Time}}</span>
+    <span class="lesson-title"><strong>{{if .Lesson.Slot.Subject}}{{.Lesson.Slot.Subject}}{{else}}Open lesson{{end}}</strong><small>{{if .Lesson.Slot.Class}}Class {{.Lesson.Slot.Class}}{{end}}{{if .Lesson.Slot.Topic}} · {{.Lesson.Slot.Topic}}{{end}}</small></span>
+    <span class="lesson-state">{{if .Lesson.Complete}}Ready{{else}}Plan{{end}}</span><span class="chevron" aria-hidden="true">⌄</span>
+  </summary>
+  <form class="lesson-plan" hx-post="/agenda/{{.Date}}/lessons/{{.Lesson.Slot.Number}}" hx-target="#lesson-{{.Lesson.Slot.Number}}" hx-swap="outerHTML">
+    <div class="lesson-meta">
+      <label>Time<input name="time" value="{{.Lesson.Slot.Time}}" required></label>
+      <label>Subject<input name="subject" list="subjects" value="{{.Lesson.Slot.Subject}}" placeholder="Choose subject"></label>
+      <label>Class<input name="class" list="classes" value="{{.Lesson.Slot.Class}}" placeholder="Choose class"></label>
+      <label class="topic-field">Topic<input name="topic" value="{{.Lesson.Slot.Topic}}" placeholder="Unit, chapter, or focus"></label>
+    </div>
+    <div class="phase-table" role="table" aria-label="Lesson phases">
+      <div class="phase-head" role="row"><span>Phase</span><span>Time</span><span>Content / description</span><span>Materials</span><span>Differentiation / notes</span></div>
+      {{range $index, $phase := .Lesson.Phases}}
+      <div class="phase-row" role="row"><strong>{{$phase.Name}}</strong><input name="phase_{{$index}}_duration" value="{{$phase.Duration}}" placeholder="10 min"><textarea name="phase_{{$index}}_content" rows="2" placeholder="What will happen?">{{$phase.Content}}</textarea><textarea name="phase_{{$index}}_materials" rows="2" placeholder="Resources">{{$phase.Materials}}</textarea><textarea name="phase_{{$index}}_notes" rows="2" placeholder="Support, extension, notes">{{$phase.Notes}}</textarea></div>
+      {{end}}
+    </div>
+    <div class="lesson-actions"><label class="ready-toggle"><input type="checkbox" name="complete" {{if .Lesson.Complete}}checked{{end}}> Ready to teach</label><button class="primary" type="submit">Save lesson</button></div>
+  </form>
+  <div class="lesson-notes">
+    <p class="lesson-notes-heading">Notes</p>
+    {{if .Lesson.Notes}}
+    <ul class="lesson-notes-list">
+      {{range .Lesson.Notes}}<li><span>{{.Time}}</span>{{.Text}}</li>{{end}}
+    </ul>
+    {{end}}
+    <form class="lesson-notes-form" hx-post="/agenda/{{.Date}}/lessons/{{.Lesson.Slot.Number}}/notes" hx-target="#lesson-{{.Lesson.Slot.Number}}" hx-swap="outerHTML">
+      <input name="text" placeholder="Something happened during this lesson…" required>
+      <button class="secondary" type="submit">Add note</button>
+    </form>
+  </div>
+</details>
+{{end}}
