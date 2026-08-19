@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"html/template"
+	"io"
 	"io/fs"
 	"net/http"
 	"os"
@@ -251,6 +252,8 @@ func newServer(dataDir string) http.Handler {
 	protected.HandleFunc("POST /schedule", server.saveSchedule)
 	protected.HandleFunc("POST /settings", server.saveSettings)
 	protected.HandleFunc("POST /reset", server.resetData)
+	protected.HandleFunc("GET /backup", server.downloadBackup)
+	protected.HandleFunc("POST /restore", server.restoreBackup)
 	protected.HandleFunc("POST /logout", server.logout)
 
 	mux := http.NewServeMux()
@@ -938,6 +941,63 @@ func (s *Server) resetData(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("HX-Redirect", "/")
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) downloadBackup(w http.ResponseWriter, r *http.Request) {
+	store := s.storeFor(r)
+	store.mu.RLock()
+	defer store.mu.RUnlock()
+
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=lehrerin-backup-%s.json", accountIDFromRequest(r)))
+	if err := json.NewEncoder(w).Encode(store.data); err != nil {
+		http.Error(w, "Could not create backup", http.StatusInternalServerError)
+	}
+}
+
+func (s *Server) restoreBackup(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 10<<20)
+	if err := r.ParseMultipartForm(10 << 20); err != nil {
+		http.Error(w, "Could not read backup file", http.StatusBadRequest)
+		return
+	}
+	file, _, err := r.FormFile("backup")
+	if err != nil {
+		http.Error(w, "Please choose a backup file", http.StatusBadRequest)
+		return
+	}
+	defer file.Close()
+
+	var restored storeData
+	decoder := json.NewDecoder(io.LimitReader(file, 10<<20))
+	if err := decoder.Decode(&restored); err != nil || restored.Schedule == nil || restored.Agendas == nil || restored.DayOverrides == nil {
+		http.Error(w, "That backup file is invalid", http.StatusBadRequest)
+		return
+	}
+	if err := ensureJSONEOF(decoder); err != nil {
+		http.Error(w, "That backup file is invalid", http.StatusBadRequest)
+		return
+	}
+
+	store := s.storeFor(r)
+	store.mu.Lock()
+	store.data = restored
+	err = store.persistLocked()
+	store.mu.Unlock()
+	if err != nil {
+		http.Error(w, "Could not restore backup", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("HX-Redirect", "/")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func ensureJSONEOF(decoder *json.Decoder) error {
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		return errors.New("backup contains trailing data")
+	}
+	return nil
 }
 
 func requestedDate(raw string) time.Time {

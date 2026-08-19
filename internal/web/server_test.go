@@ -1,6 +1,9 @@
 package web
 
 import (
+	"bytes"
+	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -480,6 +483,101 @@ func TestResetOnlyAffectsCurrentAccount(t *testing.T) {
 
 	bodyB := request(t, handler, http.MethodGet, "/?date=2026-08-12", nil, accountB)
 	assertContains(t, bodyB, "B private lesson")
+}
+
+func TestBackupContainsOnlyCurrentAccountData(t *testing.T) {
+	handler := NewServer()
+	accountA := signUpAs(t, handler, "teacher-a", "password1234")
+	accountB := signUpAs(t, handler, "teacher-b", "password1234")
+
+	request(t, handler, http.MethodPost, "/agenda/2026-08-12/lessons/1", url.Values{
+		"time": {lessonTimes[0]}, "subject": {"Mathematics"}, "class": {"7A"}, "topic": {"A backup lesson"},
+	}, accountA)
+	request(t, handler, http.MethodPost, "/agenda/2026-08-12/lessons/1", url.Values{
+		"time": {lessonTimes[0]}, "subject": {"English"}, "class": {"8B"}, "topic": {"B backup lesson"},
+	}, accountB)
+
+	backup := requestWithResponse(t, handler, http.MethodGet, "/backup", nil, accountA)
+	if backup.Code != http.StatusOK {
+		t.Fatalf("backup returned %d: %.300s", backup.Code, backup.Body.String())
+	}
+	if got := backup.Header().Get("Content-Type"); got != "application/json; charset=utf-8" {
+		t.Fatalf("backup content type = %q", got)
+	}
+	if got := backup.Header().Get("Content-Disposition"); !strings.HasPrefix(got, "attachment; filename=lehrerin-backup-") {
+		t.Fatalf("backup content disposition = %q", got)
+	}
+	assertContains(t, backup.Body.String(), "A backup lesson")
+	if strings.Contains(backup.Body.String(), "B backup lesson") {
+		t.Fatal("backup contains another account's lesson")
+	}
+}
+
+func TestRestoreReplacesOnlyCurrentAccountData(t *testing.T) {
+	handler := NewServer()
+	accountA := signUpAs(t, handler, "teacher-a", "password1234")
+	accountB := signUpAs(t, handler, "teacher-b", "password1234")
+
+	request(t, handler, http.MethodPost, "/agenda/2026-08-12/lessons/1", url.Values{
+		"time": {lessonTimes[0]}, "subject": {"Mathematics"}, "class": {"7A"}, "topic": {"Original A lesson"},
+	}, accountA)
+	request(t, handler, http.MethodPost, "/agenda/2026-08-12/lessons/1", url.Values{
+		"time": {lessonTimes[0]}, "subject": {"English"}, "class": {"8B"}, "topic": {"B lesson stays"},
+	}, accountB)
+
+	backup := requestWithResponse(t, handler, http.MethodGet, "/backup", nil, accountA)
+	restored := storeData{}
+	if err := json.Unmarshal(backup.Body.Bytes(), &restored); err != nil {
+		t.Fatalf("decode backup: %v", err)
+	}
+	restored.Agendas["2026-08-12"][1] = restored.Agendas["2026-08-12"][1]
+	lesson := restored.Agendas["2026-08-12"][1]
+	lesson.Slot.Topic = "Restored A lesson"
+	restored.Agendas["2026-08-12"][1] = lesson
+	data, err := json.Marshal(restored)
+	if err != nil {
+		t.Fatalf("encode modified backup: %v", err)
+	}
+
+	restore := multipartRequest(t, handler, "/restore", data, accountA)
+	if restore.Code != http.StatusNoContent || restore.Header().Get("HX-Redirect") != "/" {
+		t.Fatalf("restore returned %d with redirect %q", restore.Code, restore.Header().Get("HX-Redirect"))
+	}
+	bodyA := request(t, handler, http.MethodGet, "/?date=2026-08-12", nil, accountA)
+	assertContains(t, bodyA, "Restored A lesson")
+	bodyB := request(t, handler, http.MethodGet, "/?date=2026-08-12", nil, accountB)
+	assertContains(t, bodyB, "B lesson stays")
+}
+
+func TestRestoreRejectsInvalidBackup(t *testing.T) {
+	handler := NewServer()
+	cookie := signUp(t, handler)
+	response := multipartRequest(t, handler, "/restore", []byte(`{"not":"a planner"}`), cookie)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("invalid restore returned %d, want 400", response.Code)
+	}
+}
+
+func multipartRequest(t *testing.T, handler http.Handler, target string, data []byte, cookie string) *httptest.ResponseRecorder {
+	t.Helper()
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	part, err := writer.CreateFormFile("backup", "lehrerin-backup.json")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := part.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := writer.Close(); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodPost, target, &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	req.Header.Set("Cookie", cookie)
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+	return response
 }
 
 func postAuthForm(t *testing.T, handler http.Handler, target string, form url.Values) *httptest.ResponseRecorder {

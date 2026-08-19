@@ -59,6 +59,11 @@ h2 { margin-bottom: 0; font-size: 20px; font-weight: 700; }
 .secondary { border: 1px solid var(--line); color: var(--ink); background: var(--surface); }
 .danger { border: 1px solid var(--coral); color: var(--coral); background: var(--surface); }
 .danger:hover { color: white; background: var(--coral); }
+.backup-zone { display: flex; align-items: center; justify-content: space-between; gap: 20px; margin: 28px 28px 0; padding-top: 24px; border-top: 1px solid var(--line); }
+.backup-zone p { margin: 5px 0 0; color: var(--muted); font-size: 13px; }
+.restore-form { display: flex; align-items: end; justify-content: space-between; gap: 20px; margin: 20px 28px 28px; }
+.restore-form label { display: grid; gap: 7px; color: var(--muted); font-size: 12px; font-weight: 700; }
+.restore-form input { max-width: 260px; color: var(--ink); font-size: 13px; font-weight: 400; }
 .button-link { display: inline-grid; place-items: center; white-space: nowrap; text-decoration: none; }
 
 .date-controls { display: flex; align-items: center; gap: 8px; }
@@ -298,6 +303,9 @@ dialog::backdrop { background: rgba(32, 38, 34, 0.45); }
   .topic-field { grid-column: auto; }
   .lesson-actions { justify-content: space-between; }
   .year-grid { overflow-x: auto; }
+  .backup-zone, .restore-form { align-items: stretch; flex-direction: column; gap: 12px; }
+  .backup-zone .button-link, .restore-form button { width: 100%; }
+  .restore-form input { max-width: none; width: 100%; }
   .year-row { min-width: 620px; }
   .year-row a span { display: block; }
   .schedule-row { grid-template-columns: 36px 1fr 1fr; }
