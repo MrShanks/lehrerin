@@ -1,7 +1,6 @@
 services:
   lehrerin:
-    build: .
-    image: lehrerin:latest
+    image: staffolis/lehrerin:latest
     container_name: lehrerin_app
     restart: unless-stopped
     environment:
