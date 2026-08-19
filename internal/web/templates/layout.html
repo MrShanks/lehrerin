@@ -47,13 +47,15 @@
       <button class="primary" type="submit">Save settings</button>
     </form>
     <div class="backup-zone">
-      <div><strong>Local backup</strong><p>Download a copy of your planner data to keep locally.</p></div>
-      <a class="secondary button-link" href="/backup">Download backup</a>
+      <div class="backup-download">
+        <div><strong>Local backup</strong><p>Download a copy of your planner data to keep locally.</p></div>
+        <a class="secondary button-link" href="/backup">Download backup</a>
+      </div>
+      <form class="restore-form" hx-post="/restore" hx-encoding="multipart/form-data" hx-confirm="Restoring a backup will replace all of your current planner data. Continue?">
+        <label>Restore a backup<input type="file" name="backup" accept="application/json,.json" required></label>
+        <button class="secondary" type="submit">Restore backup</button>
+      </form>
     </div>
-    <form class="restore-form" hx-post="/restore" hx-encoding="multipart/form-data" hx-confirm="Restoring a backup will replace all of your current planner data. Continue?">
-      <label>Restore backup<input type="file" name="backup" accept="application/json,.json" required></label>
-      <button class="secondary" type="submit">Restore backup</button>
-    </form>
     <div class="danger-zone">
       <div><strong>Reset all data</strong><p>Permanently deletes every lesson, note, special day, and setting, restoring the planner to its defaults. This cannot be undone.</p></div>
       <form hx-post="/reset" hx-confirm="This will permanently delete all lessons, notes, special days, and settings. This cannot be undone. Continue?">
