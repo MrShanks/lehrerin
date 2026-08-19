@@ -22,7 +22,11 @@
       <a href="/notes" {{if eq .View "notes"}}aria-current="page"{{end}}>Notes</a>
       <a href="/review" {{if eq .View "review"}}aria-current="page"{{end}}>Review</a>
     </nav>
-    <div class="teacher"><span class="teacher-copy"><strong>{{.Teacher}}</strong><small>{{.School}}</small></span><span class="avatar">T</span></div>
+    <div class="teacher">
+      <span class="teacher-copy"><strong>{{.Teacher}}</strong><small>{{.School}}</small></span>
+      <button class="avatar account-button" type="button" command="show-modal" commandfor="settings-dialog" aria-label="Open account settings" title="Account settings">T</button>
+      <form action="/logout" method="post"><button class="icon-link logout-button" type="submit" aria-label="Log out" title="Log out">&#x23FB;</button></form>
+    </div>
   </header>
   <main>
     {{if eq .View "agenda"}}{{template "agenda" .}}{{end}}
@@ -31,6 +35,24 @@
     {{if eq .View "notes"}}{{template "notes" .}}{{end}}
     {{if eq .View "review"}}{{template "review" .}}{{end}}
   </main>
+  <dialog id="settings-dialog">
+    <form class="settings-form" hx-post="/settings">
+      <div class="dialog-heading"><div><p class="eyebrow">Configuration</p><h2>Planner settings</h2></div><button class="icon-button" type="button" command="close" commandfor="settings-dialog" aria-label="Close">×</button></div>
+      <div class="form-row"><label>Teacher<input name="teacher" value="{{.Teacher}}"></label><label>School<input name="school" value="{{.School}}"></label></div>
+      <div class="form-row"><label>Subjects, one per line<textarea name="subjects" rows="10">{{range .Subjects}}{{.}}
+{{end}}</textarea></label><label>Classes, one per line<textarea name="classes" rows="10">{{range .Classes}}{{.}}
+{{end}}</textarea></label></div>
+      <label>Students, one per line<textarea name="students" rows="6">{{range .Students}}{{.}}
+{{end}}</textarea></label>
+      <button class="primary" type="submit">Save settings</button>
+    </form>
+    <div class="danger-zone">
+      <div><strong>Reset all data</strong><p>Permanently deletes every lesson, note, special day, and setting, restoring the planner to its defaults. This cannot be undone.</p></div>
+      <form hx-post="/reset" hx-confirm="This will permanently delete all lessons, notes, special days, and settings. This cannot be undone. Continue?">
+        <button class="danger" type="submit">Reset all data</button>
+      </form>
+    </div>
+  </dialog>
   <datalist id="subjects">{{range .Subjects}}<option value="{{.}}">{{end}}</datalist>
   <datalist id="classes">{{range .Classes}}<option value="{{.}}">{{end}}</datalist>
   <datalist id="students">{{range .Students}}<option value="{{.}}">{{end}}</datalist>

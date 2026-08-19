@@ -14,8 +14,10 @@ func main() {
 		address = ":" + port
 	}
 
+	handler := web.NewPersistentServer("data")
+
 	log.Printf("Lehrerin is ready at http://localhost%s", address)
-	if err := http.ListenAndServe(address, web.NewPersistentServer("data/lehrerin.json")); err != nil {
+	if err := http.ListenAndServe(address, handler); err != nil {
 		log.Fatal(err)
 	}
 }

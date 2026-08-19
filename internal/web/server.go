@@ -198,18 +198,22 @@ type scheduleData struct {
 
 type Server struct {
 	templates *template.Template
-	store     *Store
+	accounts  *AccountManager
+}
+
+func (s *Server) storeFor(r *http.Request) *Store {
+	return s.accounts.storeFor(accountIDFromRequest(r))
 }
 
 func NewServer() http.Handler {
 	return newServer("")
 }
 
-func NewPersistentServer(path string) http.Handler {
-	return newServer(path)
+func NewPersistentServer(dataDir string) http.Handler {
+	return newServer(dataDir)
 }
 
-func newServer(path string) http.Handler {
+func newServer(dataDir string) http.Handler {
 	functions := template.FuncMap{
 		"lessonData": func(date string, lesson Lesson, subjects, classes, students []string) lessonData {
 			return lessonData{Date: date, Lesson: lesson, Subjects: subjects, Classes: classes, Students: students}
@@ -231,22 +235,31 @@ func newServer(path string) http.Handler {
 		panic(err)
 	}
 
-	server := &Server{templates: templates, store: newStore(path)}
+	server := &Server{templates: templates, accounts: newAccountManager(dataDir)}
+
+	protected := http.NewServeMux()
+	protected.HandleFunc("GET /", server.agenda)
+	protected.HandleFunc("GET /year", server.year)
+	protected.HandleFunc("GET /schedule", server.schedule)
+	protected.HandleFunc("GET /notes", server.notes)
+	protected.HandleFunc("GET /review", server.review)
+	protected.HandleFunc("POST /agenda/{date}/lessons/{slot}", server.saveLesson)
+	protected.HandleFunc("POST /agenda/{date}/lessons/{slot}/notes", server.addLessonNote)
+	protected.HandleFunc("POST /agenda/{date}/override", server.saveDayOverride)
+	protected.HandleFunc("POST /agenda/{date}/override/{index}/edit", server.updateDayOverride)
+	protected.HandleFunc("POST /agenda/{date}/override/{index}/clear", server.clearDayOverride)
+	protected.HandleFunc("POST /schedule", server.saveSchedule)
+	protected.HandleFunc("POST /settings", server.saveSettings)
+	protected.HandleFunc("POST /reset", server.resetData)
+	protected.HandleFunc("POST /logout", server.logout)
+
 	mux := http.NewServeMux()
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(static))))
-	mux.HandleFunc("GET /", server.agenda)
-	mux.HandleFunc("GET /year", server.year)
-	mux.HandleFunc("GET /schedule", server.schedule)
-	mux.HandleFunc("GET /notes", server.notes)
-	mux.HandleFunc("GET /review", server.review)
-	mux.HandleFunc("POST /agenda/{date}/lessons/{slot}", server.saveLesson)
-	mux.HandleFunc("POST /agenda/{date}/lessons/{slot}/notes", server.addLessonNote)
-	mux.HandleFunc("POST /agenda/{date}/override", server.saveDayOverride)
-	mux.HandleFunc("POST /agenda/{date}/override/{index}/edit", server.updateDayOverride)
-	mux.HandleFunc("POST /agenda/{date}/override/{index}/clear", server.clearDayOverride)
-	mux.HandleFunc("POST /schedule", server.saveSchedule)
-	mux.HandleFunc("POST /settings", server.saveSettings)
-	mux.HandleFunc("POST /reset", server.resetData)
+	mux.HandleFunc("GET /login", server.loginPage)
+	mux.HandleFunc("POST /login", server.loginSubmit)
+	mux.HandleFunc("GET /signup", server.signupPage)
+	mux.HandleFunc("POST /signup", server.signupSubmit)
+	mux.Handle("/", server.accounts.requireAuth(protected))
 	return mux
 }
 
@@ -555,31 +568,35 @@ func (s *Store) persistLocked() error {
 
 func (s *Server) agenda(w http.ResponseWriter, r *http.Request) {
 	date := requestedDate(r.URL.Query().Get("date"))
-	s.render(w, "layout", s.agendaData(date, strings.TrimSpace(r.URL.Query().Get("subject"))))
+	store := s.storeFor(r)
+	s.render(w, "layout", s.agendaData(store, date, strings.TrimSpace(r.URL.Query().Get("subject"))))
 }
 
-func (s *Server) year(w http.ResponseWriter, _ *http.Request) {
-	data := s.baseData("year")
-	s.store.mu.RLock()
-	eventCounts := make(map[string]int, len(s.store.data.DayOverrides))
-	for key, overrides := range s.store.data.DayOverrides {
+func (s *Server) year(w http.ResponseWriter, r *http.Request) {
+	store := s.storeFor(r)
+	data := s.baseData(store, "year")
+	store.mu.RLock()
+	eventCounts := make(map[string]int, len(store.data.DayOverrides))
+	for key, overrides := range store.data.DayOverrides {
 		eventCounts[key] = len(overrides)
 	}
-	s.store.mu.RUnlock()
+	store.mu.RUnlock()
 	data.Weeks = schoolWeeks(eventCounts)
 	s.render(w, "layout", data)
 }
 
 func (s *Server) notes(w http.ResponseWriter, r *http.Request) {
-	data := s.baseData("notes")
+	store := s.storeFor(r)
+	data := s.baseData(store, "notes")
 	data.NoteStudent = strings.TrimSpace(r.URL.Query().Get("student"))
-	data.NoteStudents = s.store.noteStudents()
-	data.Notes = s.store.allNotes(data.NoteStudent)
+	data.NoteStudents = store.noteStudents()
+	data.Notes = store.allNotes(data.NoteStudent)
 	s.render(w, "layout", data)
 }
 
 func (s *Server) review(w http.ResponseWriter, r *http.Request) {
-	data := s.baseData("review")
+	store := s.storeFor(r)
+	data := s.baseData(store, "review")
 	data.ReviewSubject = strings.TrimSpace(r.URL.Query().Get("subject"))
 	data.ReviewClass = strings.TrimSpace(r.URL.Query().Get("class"))
 	if r.URL.Query().Has("ready") {
@@ -588,22 +605,23 @@ func (s *Server) review(w http.ResponseWriter, r *http.Request) {
 		data.ReviewReadyOnly = true
 	}
 	if data.ReviewSubject != "" || data.ReviewClass != "" {
-		data.ReviewLessons = s.store.lessonsFor(data.ReviewSubject, data.ReviewClass, data.ReviewReadyOnly)
+		data.ReviewLessons = store.lessonsFor(data.ReviewSubject, data.ReviewClass, data.ReviewReadyOnly)
 		data.ReviewCount = len(data.ReviewLessons)
 	}
 	s.render(w, "layout", data)
 }
 
-func (s *Server) schedule(w http.ResponseWriter, _ *http.Request) {
-	data := s.baseData("schedule")
-	s.store.mu.RLock()
-	data.Schedule = cloneSchedule(s.store.data.Schedule)
-	s.store.mu.RUnlock()
+func (s *Server) schedule(w http.ResponseWriter, r *http.Request) {
+	store := s.storeFor(r)
+	data := s.baseData(store, "schedule")
+	store.mu.RLock()
+	data.Schedule = cloneSchedule(store.data.Schedule)
+	store.mu.RUnlock()
 	s.render(w, "layout", data)
 }
 
-func (s *Server) agendaData(date time.Time, subject string) pageData {
-	data := s.baseData("agenda")
+func (s *Server) agendaData(store *Store, date time.Time, subject string) pageData {
+	data := s.baseData(store, "agenda")
 	data.Date = date.Format("Monday, January 2, 2006")
 	data.DateInput = date.Format(dateLayout)
 	if subject == "" {
@@ -616,9 +634,9 @@ func (s *Server) agendaData(date time.Time, subject string) pageData {
 	data.Week = weekLinks(date)
 	data.SubjectFilter = subject
 	if subject != "" {
-		data.SubjectWeek, data.SubjectCount = s.subjectWeek(date, subject)
+		data.SubjectWeek, data.SubjectCount = s.subjectWeek(store, date, subject)
 	}
-	if overrides := s.store.dayOverrides(date); len(overrides) > 0 {
+	if overrides := store.dayOverrides(date); len(overrides) > 0 {
 		data.Overridden = true
 		data.Overrides = make([]overrideView, len(overrides))
 		for index, override := range overrides {
@@ -629,7 +647,7 @@ func (s *Server) agendaData(date time.Time, subject string) pageData {
 			data.Overrides[index] = overrideView{Index: index, Title: override.Title, Notes: override.Notes, Activities: activities}
 		}
 	}
-	data.Lessons = s.store.agenda(date)
+	data.Lessons = store.agenda(date)
 	data.TotalCount = len(data.Lessons)
 	for _, lesson := range data.Lessons {
 		if lesson.Complete {
@@ -639,14 +657,14 @@ func (s *Server) agendaData(date time.Time, subject string) pageData {
 	return data
 }
 
-func (s *Server) subjectWeek(selected time.Time, subject string) ([]subjectDay, int) {
+func (s *Server) subjectWeek(store *Store, selected time.Time, subject string) ([]subjectDay, int) {
 	start := selected.AddDate(0, 0, -weekdayOffset(selected.Weekday()))
 	days := make([]subjectDay, 5)
 	total := 0
 	for index := range days {
 		date := start.AddDate(0, 0, index)
 		var matches []Lesson
-		for _, lesson := range s.store.agenda(date) {
+		for _, lesson := range store.agenda(date) {
 			if strings.EqualFold(lesson.Slot.Subject, subject) {
 				matches = append(matches, lesson)
 			}
@@ -660,13 +678,13 @@ func (s *Server) subjectWeek(selected time.Time, subject string) ([]subjectDay, 
 	return days, total
 }
 
-func (s *Server) baseData(view string) pageData {
-	s.store.mu.RLock()
-	defer s.store.mu.RUnlock()
+func (s *Server) baseData(store *Store, view string) pageData {
+	store.mu.RLock()
+	defer store.mu.RUnlock()
 	return pageData{
-		View: view, Teacher: s.store.data.Teacher, School: s.store.data.School,
-		Subjects: append([]string(nil), s.store.data.Subjects...), Classes: append([]string(nil), s.store.data.Classes...),
-		Students: append([]string(nil), s.store.data.Students...),
+		View: view, Teacher: store.data.Teacher, School: store.data.School,
+		Subjects: append([]string(nil), store.data.Subjects...), Classes: append([]string(nil), store.data.Classes...),
+		Students: append([]string(nil), store.data.Students...),
 		Weekdays: weekdays(), SchoolYear: "2026/2027", YearStart: "August 10, 2026", YearEnd: "July 2, 2027",
 	}
 }
@@ -687,7 +705,8 @@ func (s *Server) saveLesson(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lessons := s.store.agenda(date)
+	store := s.storeFor(r)
+	lessons := store.agenda(date)
 	lesson := lessons[slotIndex]
 	lesson.Slot.Time = strings.TrimSpace(r.FormValue("time"))
 	lesson.Slot.Subject = strings.TrimSpace(r.FormValue("subject"))
@@ -700,19 +719,19 @@ func (s *Server) saveLesson(w http.ResponseWriter, r *http.Request) {
 		lesson.Phases[index].Materials = strings.TrimSpace(r.FormValue(fmt.Sprintf("phase_%d_materials", index)))
 		lesson.Phases[index].Notes = strings.TrimSpace(r.FormValue(fmt.Sprintf("phase_%d_notes", index)))
 	}
-	if err := s.store.saveLessonOverride(date, slotIndex, lesson); err != nil {
+	if err := store.saveLessonOverride(date, slotIndex, lesson); err != nil {
 		http.Error(w, "Could not save lesson", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("HX-Trigger", "lessonSaved")
-	s.store.mu.RLock()
+	store.mu.RLock()
 	data := lessonData{
 		Date: date.Format(dateLayout), Lesson: lesson,
-		Subjects: append([]string(nil), s.store.data.Subjects...),
-		Classes:  append([]string(nil), s.store.data.Classes...),
-		Students: append([]string(nil), s.store.data.Students...),
+		Subjects: append([]string(nil), store.data.Subjects...),
+		Classes:  append([]string(nil), store.data.Classes...),
+		Students: append([]string(nil), store.data.Students...),
 	}
-	s.store.mu.RUnlock()
+	store.mu.RUnlock()
 	s.render(w, "lesson-card", data)
 }
 
@@ -738,22 +757,23 @@ func (s *Server) addLessonNote(w http.ResponseWriter, r *http.Request) {
 	}
 	student := strings.TrimSpace(r.FormValue("student"))
 
-	lessons := s.store.agenda(date)
+	store := s.storeFor(r)
+	lessons := store.agenda(date)
 	lesson := lessons[slotIndex]
 	lesson.Notes = append(lesson.Notes, LessonNote{Time: time.Now().Format("15:04"), Text: text, Student: student})
-	if err := s.store.saveLessonOverride(date, slotIndex, lesson); err != nil {
+	if err := store.saveLessonOverride(date, slotIndex, lesson); err != nil {
 		http.Error(w, "Could not save note", http.StatusInternalServerError)
 		return
 	}
 	w.Header().Set("HX-Trigger", "lessonSaved")
-	s.store.mu.RLock()
+	store.mu.RLock()
 	data := lessonData{
 		Date: date.Format(dateLayout), Lesson: lesson,
-		Subjects: append([]string(nil), s.store.data.Subjects...),
-		Classes:  append([]string(nil), s.store.data.Classes...),
-		Students: append([]string(nil), s.store.data.Students...),
+		Subjects: append([]string(nil), store.data.Subjects...),
+		Classes:  append([]string(nil), store.data.Classes...),
+		Students: append([]string(nil), store.data.Students...),
 	}
-	s.store.mu.RUnlock()
+	store.mu.RUnlock()
 	s.render(w, "lesson-card", data)
 }
 
@@ -789,12 +809,13 @@ func (s *Server) saveDayOverride(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "End date must be on or after the start date", http.StatusBadRequest)
 		return
 	}
+	store := s.storeFor(r)
 	override := DayOverride{
 		Title:      title,
 		Notes:      strings.TrimSpace(r.FormValue("notes")),
 		Activities: parseActivities(r),
 	}
-	if err := s.store.addDayOverride(schoolDatesInRange(start, end), override); err != nil {
+	if err := store.addDayOverride(schoolDatesInRange(start, end), override); err != nil {
 		http.Error(w, "Could not save event", http.StatusInternalServerError)
 		return
 	}
@@ -822,12 +843,13 @@ func (s *Server) updateDayOverride(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Event title is required", http.StatusBadRequest)
 		return
 	}
+	store := s.storeFor(r)
 	override := DayOverride{
 		Title:      title,
 		Notes:      strings.TrimSpace(r.FormValue("notes")),
 		Activities: parseActivities(r),
 	}
-	if err := s.store.updateDayOverride(date, index, override); err != nil {
+	if err := store.updateDayOverride(date, index, override); err != nil {
 		http.Error(w, "Could not update event", http.StatusInternalServerError)
 		return
 	}
@@ -846,7 +868,7 @@ func (s *Server) clearDayOverride(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid event", http.StatusBadRequest)
 		return
 	}
-	if err := s.store.removeDayOverride(date, index); err != nil {
+	if err := s.storeFor(r).removeDayOverride(date, index); err != nil {
 		http.Error(w, "Could not restore lessons", http.StatusInternalServerError)
 		return
 	}
@@ -860,9 +882,10 @@ func (s *Server) saveSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.store.mu.Lock()
+	store := s.storeFor(r)
+	store.mu.Lock()
 	for _, weekday := range weekdays() {
-		slots := s.store.data.Schedule[weekday]
+		slots := store.data.Schedule[weekday]
 		for index := range slots {
 			prefix := fmt.Sprintf("%s-%d-", weekday, slots[index].Number)
 			slots[index].Time = strings.TrimSpace(r.FormValue(prefix + "time"))
@@ -871,18 +894,18 @@ func (s *Server) saveSchedule(w http.ResponseWriter, r *http.Request) {
 			slots[index].Topic = strings.TrimSpace(r.FormValue(prefix + "topic"))
 		}
 	}
-	err := s.store.persistLocked()
-	s.store.mu.Unlock()
+	err := store.persistLocked()
+	store.mu.Unlock()
 	if err != nil {
 		http.Error(w, "Could not save timetable", http.StatusInternalServerError)
 		return
 	}
 
 	w.Header().Set("HX-Trigger", "lessonSaved")
-	data := s.baseData("schedule")
-	s.store.mu.RLock()
-	data.Schedule = cloneSchedule(s.store.data.Schedule)
-	s.store.mu.RUnlock()
+	data := s.baseData(store, "schedule")
+	store.mu.RLock()
+	data.Schedule = cloneSchedule(store.data.Schedule)
+	store.mu.RUnlock()
 	s.render(w, "schedule-tabs", data)
 }
 
@@ -891,14 +914,15 @@ func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid input", http.StatusBadRequest)
 		return
 	}
-	s.store.mu.Lock()
-	s.store.data.Teacher = strings.TrimSpace(r.FormValue("teacher"))
-	s.store.data.School = strings.TrimSpace(r.FormValue("school"))
-	s.store.data.Subjects = splitLines(r.FormValue("subjects"))
-	s.store.data.Classes = splitLines(r.FormValue("classes"))
-	s.store.data.Students = splitLines(r.FormValue("students"))
-	err := s.store.persistLocked()
-	s.store.mu.Unlock()
+	store := s.storeFor(r)
+	store.mu.Lock()
+	store.data.Teacher = strings.TrimSpace(r.FormValue("teacher"))
+	store.data.School = strings.TrimSpace(r.FormValue("school"))
+	store.data.Subjects = splitLines(r.FormValue("subjects"))
+	store.data.Classes = splitLines(r.FormValue("classes"))
+	store.data.Students = splitLines(r.FormValue("students"))
+	err := store.persistLocked()
+	store.mu.Unlock()
 	if err != nil {
 		http.Error(w, "Could not save settings", http.StatusInternalServerError)
 		return
@@ -907,8 +931,8 @@ func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *Server) resetData(w http.ResponseWriter, _ *http.Request) {
-	if err := s.store.reset(); err != nil {
+func (s *Server) resetData(w http.ResponseWriter, r *http.Request) {
+	if err := s.storeFor(r).reset(); err != nil {
 		http.Error(w, "Could not reset data", http.StatusInternalServerError)
 		return
 	}

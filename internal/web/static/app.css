@@ -31,7 +31,20 @@ h1, h2, p { margin-top: 0; }
 .teacher { justify-self: end; display: flex; align-items: center; gap: 12px; }
 .teacher-copy { display: grid; text-align: right; line-height: 1.2; }
 .teacher-copy small { color: var(--muted); }
-.avatar { display: grid; place-items: center; width: 40px; height: 40px; border-radius: 50%; background: var(--yellow); font-weight: 700; font-size: 13px; }
+.avatar { display: grid; place-items: center; width: 40px; height: 40px; border: 0; border-radius: 50%; background: var(--yellow); color: var(--ink); font-weight: 700; font-size: 13px; }
+.account-button:hover { outline: 3px solid var(--green-soft); }
+.logout-button { width: 36px; height: 36px; border-radius: 50%; color: var(--muted); font-size: 18px; line-height: 1; }
+.logout-button:hover { border-color: var(--coral); color: var(--coral); }
+
+.auth-body { display: grid; place-items: center; min-height: 100vh; padding: 24px; }
+.auth-card { width: min(420px, 100%); padding: 40px; border: 1px solid var(--line); border-radius: 8px; background: var(--surface); box-shadow: var(--shadow); }
+.auth-card .brand { display: flex; align-items: center; gap: 11px; margin-bottom: 24px; font-weight: 700; font-size: 20px; }
+.auth-card h1 { font-size: 28px; }
+.auth-form { display: grid; gap: 16px; margin-top: 20px; }
+.auth-form button { width: 100%; }
+.auth-error { margin-top: 16px; padding: 10px 14px; border: 1px solid var(--coral); border-radius: 4px; color: var(--coral); background: #fdf3f1; font-size: 13px; }
+.auth-switch { margin: 20px 0 0; color: var(--muted); font-size: 13px; }
+.auth-switch a { color: var(--green); font-weight: 700; }
 
 main { width: min(1180px, calc(100% - 40px)); margin: 0 auto; padding: 58px 0 88px; }
 .page-heading { display: flex; align-items: end; justify-content: space-between; gap: 32px; margin-bottom: 38px; }

@@ -1,7 +1,6 @@
 {{define "schedule"}}
 <section class="page-heading">
   <div><p class="eyebrow">Reusable defaults</p><h1>Weekly timetable</h1><p class="lede">Set your usual lessons once. New daily agendas inherit these details and can still be changed independently.</p></div>
-  <button class="secondary" type="button" command="show-modal" commandfor="settings-dialog">Planner settings</button>
 </section>
 <form id="schedule-form" data-dirty-form hx-post="/schedule" hx-target="#schedule-tabs" hx-swap="outerHTML">
   <div class="schedule-save-bar">
@@ -11,24 +10,6 @@
   </div>
   {{template "schedule-tabs" .}}
 </form>
-<dialog id="settings-dialog">
-  <form class="settings-form" hx-post="/settings">
-    <div class="dialog-heading"><div><p class="eyebrow">Configuration</p><h2>Planner settings</h2></div><button class="icon-button" type="button" command="close" commandfor="settings-dialog" aria-label="Close">×</button></div>
-    <div class="form-row"><label>Teacher<input name="teacher" value="{{.Teacher}}"></label><label>School<input name="school" value="{{.School}}"></label></div>
-    <div class="form-row"><label>Subjects, one per line<textarea name="subjects" rows="10">{{range .Subjects}}{{.}}
-{{end}}</textarea></label><label>Classes, one per line<textarea name="classes" rows="10">{{range .Classes}}{{.}}
-{{end}}</textarea></label></div>
-    <label>Students, one per line<textarea name="students" rows="6">{{range .Students}}{{.}}
-{{end}}</textarea></label>
-    <button class="primary" type="submit">Save settings</button>
-  </form>
-  <div class="danger-zone">
-    <div><strong>Reset all data</strong><p>Permanently deletes every lesson, note, special day, and setting, restoring the planner to its defaults. This cannot be undone.</p></div>
-    <form hx-post="/reset" hx-confirm="This will permanently delete all lessons, notes, special days, and settings. This cannot be undone. Continue?">
-      <button class="danger" type="submit">Reset all data</button>
-    </form>
-  </div>
-</dialog>
 {{end}}
 
 {{define "schedule-tabs"}}

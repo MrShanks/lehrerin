@@ -1,0 +1,29 @@
+{{define "login"}}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Log in · Lehrerin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body class="auth-body">
+  <main class="auth-card">
+    <div class="brand"><span class="brand-mark">L</span><span>lehrerin</span></div>
+    <h1>Log in</h1>
+    <p class="lede">Welcome back. Your schedule, agendas, and notes are waiting.</p>
+    {{if .Error}}<p class="auth-error">{{.Error}}</p>{{end}}
+    <form class="auth-form" method="post" action="/login">
+      <label>Username<input name="username" autocomplete="username" required autofocus></label>
+      <label>Password<input type="password" name="password" autocomplete="current-password" required></label>
+      <button class="primary" type="submit">Log in</button>
+    </form>
+    <p class="auth-switch">New here? <a href="/signup">Create an account</a></p>
+  </main>
+</body>
+</html>
+{{end}}

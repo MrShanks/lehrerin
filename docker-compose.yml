@@ -3,6 +3,8 @@ services:
     image: staffolis/lehrerin:latest
     container_name: lehrerin_app
     restart: unless-stopped
+    env_file:
+      - .env
     environment:
       - PORT=8080
     volumes:
