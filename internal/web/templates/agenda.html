@@ -68,7 +68,7 @@
   </div>
   <div class="lesson-stack">
     {{range .Lessons}}
-      {{template "lesson-card" (lessonData $.DateInput . $.Subjects $.Classes)}}
+      {{template "lesson-card" (lessonData $.DateInput . $.Subjects $.Classes $.Students)}}
       {{if eq .Slot.Number 5}}<div class="lunch-break"><span>Lunch break</span></div>{{end}}
     {{end}}
   </div>
@@ -195,10 +195,11 @@
     <p class="lesson-notes-heading">Notes</p>
     {{if .Lesson.Notes}}
     <ul class="lesson-notes-list">
-      {{range .Lesson.Notes}}<li><span>{{.Time}}</span>{{.Text}}</li>{{end}}
+      {{range .Lesson.Notes}}<li><span>{{.Time}}</span>{{if .Student}}<strong>{{.Student}}</strong>{{end}}{{.Text}}</li>{{end}}
     </ul>
     {{end}}
     <form class="lesson-notes-form" hx-post="/agenda/{{.Date}}/lessons/{{.Lesson.Slot.Number}}/notes" hx-target="#lesson-{{.Lesson.Slot.Number}}" hx-swap="outerHTML">
+      <input name="student" list="students" placeholder="Student (optional)" class="lesson-notes-student">
       <input name="text" placeholder="Something happened during this lesson…" required>
       <button class="secondary" type="submit">Add note</button>
     </form>

@@ -208,6 +208,155 @@ func TestLessonNotesShowUpInLog(t *testing.T) {
 	}
 }
 
+func TestNotesCanBeTaggedAndFilteredByStudent(t *testing.T) {
+	handler := NewServer()
+	server := handler.(*http.ServeMux)
+
+	request(t, server, http.MethodPost, "/agenda/2026-08-12/lessons/1/notes",
+		url.Values{"text": {"Struggled with fractions"}, "student": {"Alex Doe"}})
+	request(t, server, http.MethodPost, "/agenda/2026-08-13/lessons/2/notes",
+		url.Values{"text": {"Great class discussion"}})
+
+	all := request(t, server, http.MethodGet, "/notes", nil)
+	assertContains(t, all, "Struggled with fractions")
+	assertContains(t, all, "Alex Doe")
+	assertContains(t, all, "Great class discussion")
+	// the student never added to Settings should still appear as a filter option
+	assertContains(t, all, "<option value=\"Alex Doe\"")
+
+	filtered := request(t, server, http.MethodGet, "/notes?student=Alex+Doe", nil)
+	assertContains(t, filtered, "Struggled with fractions")
+	if strings.Contains(filtered, "Great class discussion") {
+		t.Fatal("student filter should hide notes tagged for someone else (or untagged)")
+	}
+}
+
+func TestResetDataWipesEverything(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "lehrerin.json")
+	handler := NewPersistentServer(path)
+
+	request(t, handler, http.MethodPost, "/agenda/2026-08-12/lessons/1/notes",
+		url.Values{"text": {"Struggled with fractions"}, "student": {"Alex Doe"}})
+	request(t, handler, http.MethodPost, "/agenda/2026-08-12/override",
+		url.Values{"title": {"School camp"}, "start": {"2026-08-12"}, "end": {"2026-08-12"}})
+	request(t, handler, http.MethodPost, "/settings",
+		url.Values{"teacher": {"Ms. Weber"}, "students": {"Alex Doe"}})
+
+	request(t, handler, http.MethodPost, "/reset", nil)
+
+	notes := request(t, handler, http.MethodGet, "/notes", nil)
+	if strings.Contains(notes, "Struggled with fractions") {
+		t.Fatal("reset should clear existing notes")
+	}
+
+	agenda := request(t, handler, http.MethodGet, "/?date=2026-08-12", nil)
+	if strings.Contains(agenda, "day-override-list") {
+		t.Fatal("reset should clear existing special day events")
+	}
+
+	// data should also be reset for anyone reloading from the persisted file
+	reloaded := request(t, NewPersistentServer(path), http.MethodGet, "/notes", nil)
+	if strings.Contains(reloaded, "Struggled with fractions") {
+		t.Fatal("reset should persist the wiped data to disk")
+	}
+}
+
+func TestReviewShowsLessonsBySubjectAndClass(t *testing.T) {
+	handler := NewServer()
+	server := handler.(*http.ServeMux)
+
+	request(t, server, http.MethodPost, "/agenda/2026-08-12/lessons/1",
+		url.Values{"time": {lessonTimes[0]}, "subject": {"Mathematics"}, "class": {"7A"}, "topic": {"Fractions"}, "complete": {"on"}})
+	request(t, server, http.MethodPost, "/agenda/2026-09-02/lessons/2",
+		url.Values{"time": {lessonTimes[1]}, "subject": {"Mathematics"}, "class": {"7A"}, "topic": {"Decimals"}})
+	request(t, server, http.MethodPost, "/agenda/2026-08-13/lessons/1",
+		url.Values{"time": {lessonTimes[0]}, "subject": {"Mathematics"}, "class": {"9A"}, "topic": {"Algebra"}})
+	request(t, server, http.MethodPost, "/agenda/2026-08-14/lessons/1",
+		url.Values{"time": {lessonTimes[0]}, "subject": {"English"}, "class": {"7A"}, "topic": {"Poetry"}})
+
+	empty := request(t, server, http.MethodGet, "/review", nil)
+	assertContains(t, empty, "Choose a subject")
+
+	review := request(t, server, http.MethodGet, "/review?subject=Mathematics&class=7A&ready=0", nil)
+	assertContains(t, review, "Fractions")
+	assertContains(t, review, "Decimals")
+	assertContains(t, review, "2 lessons recorded")
+	if strings.Contains(review, "Algebra") {
+		t.Fatal("review leaked a lesson from a different class")
+	}
+	if strings.Contains(review, "Poetry") {
+		t.Fatal("review leaked a lesson from a different subject")
+	}
+
+	// oldest first, so curriculum coverage reads chronologically
+	if strings.Index(review, "Fractions") > strings.Index(review, "Decimals") {
+		t.Fatal("review lessons are not ordered oldest first")
+	}
+}
+
+func TestReviewIncludesTemplateOnlyLessons(t *testing.T) {
+	handler := NewServer()
+	server := handler.(*http.ServeMux)
+
+	// Setting up the weekly timetable alone (never opening any specific day's
+	// agenda) should still surface those lessons in the yearly review.
+	request(t, server, http.MethodPost, "/schedule",
+		url.Values{"Tuesday-2-time": {lessonTimes[1]}, "Tuesday-2-subject": {"English"}, "Tuesday-2-class": {"7A"}})
+
+	review := request(t, server, http.MethodGet, "/review?subject=English&class=7A&ready=0", nil)
+	if strings.Contains(review, "No recorded lessons") {
+		t.Fatal("review does not include lessons that only exist in the weekly timetable")
+	}
+	assertContains(t, review, "lessons recorded")
+}
+
+func TestReviewExpandsLessonInline(t *testing.T) {
+	handler := NewServer()
+	server := handler.(*http.ServeMux)
+
+	request(t, server, http.MethodPost, "/agenda/2026-08-12/lessons/1",
+		url.Values{
+			"time": {lessonTimes[0]}, "subject": {"Mathematics"}, "class": {"7A"}, "topic": {"Fractions"},
+			"phase_1_content": {"Explain equivalent fractions"},
+		})
+
+	review := request(t, server, http.MethodGet, "/review?subject=Mathematics&class=7A&ready=0", nil)
+	assertContains(t, review, "Explain equivalent fractions")
+	assertContains(t, review, "Open in agenda to edit")
+	if !strings.Contains(review, "<details") {
+		t.Fatal("review rows should expand inline instead of only linking away")
+	}
+	assertContains(t, review, "id=\"toggle-all-lessons\"")
+	assertContains(t, review, "id=\"review-list\"")
+}
+
+func TestReviewReadyOnlyFilter(t *testing.T) {
+	handler := NewServer()
+	server := handler.(*http.ServeMux)
+
+	request(t, server, http.MethodPost, "/agenda/2026-08-12/lessons/1",
+		url.Values{"time": {lessonTimes[0]}, "subject": {"Mathematics"}, "class": {"7A"}, "topic": {"Fractions"}, "complete": {"on"}})
+	request(t, server, http.MethodPost, "/agenda/2026-08-13/lessons/1",
+		url.Values{"time": {lessonTimes[0]}, "subject": {"Mathematics"}, "class": {"7A"}, "topic": {"Decimals"}})
+
+	// ready to teach is the default when no explicit status is chosen
+	byDefault := request(t, server, http.MethodGet, "/review?subject=Mathematics&class=7A", nil)
+	assertContains(t, byDefault, "Fractions")
+	if strings.Contains(byDefault, "Decimals") {
+		t.Fatal("review should default to showing only lessons ready to teach")
+	}
+
+	all := request(t, server, http.MethodGet, "/review?subject=Mathematics&class=7A&ready=0", nil)
+	assertContains(t, all, "Fractions")
+	assertContains(t, all, "Decimals")
+
+	readyOnly := request(t, server, http.MethodGet, "/review?subject=Mathematics&class=7A&ready=1", nil)
+	assertContains(t, readyOnly, "Fractions")
+	if strings.Contains(readyOnly, "Decimals") {
+		t.Fatal("ready-only filter should hide lessons that are not marked ready to teach")
+	}
+}
+
 func request(t *testing.T, handler http.Handler, method, target string, form url.Values) string {
 	t.Helper()
 	var body *strings.Reader

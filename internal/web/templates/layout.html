@@ -20,6 +20,7 @@
       <a href="/year" {{if eq .View "year"}}aria-current="page"{{end}}>School year</a>
       <a href="/schedule" {{if eq .View "schedule"}}aria-current="page"{{end}}>Timetable</a>
       <a href="/notes" {{if eq .View "notes"}}aria-current="page"{{end}}>Notes</a>
+      <a href="/review" {{if eq .View "review"}}aria-current="page"{{end}}>Review</a>
     </nav>
     <div class="teacher"><span class="teacher-copy"><strong>{{.Teacher}}</strong><small>{{.School}}</small></span><span class="avatar">T</span></div>
   </header>
@@ -28,9 +29,11 @@
     {{if eq .View "year"}}{{template "year" .}}{{end}}
     {{if eq .View "schedule"}}{{template "schedule" .}}{{end}}
     {{if eq .View "notes"}}{{template "notes" .}}{{end}}
+    {{if eq .View "review"}}{{template "review" .}}{{end}}
   </main>
   <datalist id="subjects">{{range .Subjects}}<option value="{{.}}">{{end}}</datalist>
   <datalist id="classes">{{range .Classes}}<option value="{{.}}">{{end}}</datalist>
+  <datalist id="students">{{range .Students}}<option value="{{.}}">{{end}}</datalist>
   <div id="save-toast" role="status">Saved</div>
   <dialog id="unsaved-dialog">
     <form method="dialog" class="unsaved-form">

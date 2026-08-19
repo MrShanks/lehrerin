@@ -1,0 +1,85 @@
+{{define "review"}}
+<section class="page-heading">
+  <div><p class="eyebrow">Curriculum coverage</p><h1>Review</h1><p class="lede">Pick a subject and class to see every lesson recorded for them across the whole school year.</p></div>
+</section>
+<form class="review-filters" action="/review" method="get">
+  <label>Subject
+    <select name="subject" onchange="this.form.submit()">
+      <option value="">Choose subject…</option>
+      {{range .Subjects}}<option value="{{.}}" {{if eq . $.ReviewSubject}}selected{{end}}>{{.}}</option>{{end}}
+    </select>
+  </label>
+  <label>Class
+    <select name="class" onchange="this.form.submit()">
+      <option value="">All classes</option>
+      {{range .Classes}}<option value="{{.}}" {{if eq . $.ReviewClass}}selected{{end}}>{{.}}</option>{{end}}
+    </select>
+  </label>
+  <label>Status
+    <select name="ready" onchange="this.form.submit()">
+      <option value="1" {{if .ReviewReadyOnly}}selected{{end}}>Ready to teach</option>
+      <option value="0" {{if not .ReviewReadyOnly}}selected{{end}}>All lessons</option>
+    </select>
+  </label>
+  {{if or .ReviewSubject .ReviewClass}}<a href="/review">Clear filters</a>{{end}}
+</form>
+{{if or .ReviewSubject .ReviewClass}}
+  {{if .ReviewLessons}}
+  <div class="review-summary">
+    <p class="review-count">{{.ReviewCount}} {{if eq .ReviewCount 1}}lesson{{else}}lessons{{end}} recorded</p>
+    <button class="secondary" type="button" id="toggle-all-lessons">Expand all</button>
+  </div>
+  <div class="review-list" id="review-list">
+    {{range .ReviewLessons}}
+    <details class="review-row{{if .Complete}} complete{{end}}">
+      <summary>
+        <span class="review-date">{{.DateLabel}}</span>
+        <span class="review-time">{{.Time}}</span>
+        <span class="review-topic">{{if .Topic}}{{.Topic}}{{else}}No topic set{{end}}</span>
+        <span class="review-state">{{if .Complete}}Ready{{else}}Plan{{end}}</span>
+      </summary>
+      <div class="review-detail">
+        {{if .HasPlan}}
+        <div class="phase-table" role="table" aria-label="Lesson phases">
+          <div class="phase-head" role="row"><span>Phase</span><span>Time</span><span>Content / description</span><span>Materials</span><span>Differentiation / notes</span></div>
+          {{range .Lesson.Phases}}
+          <div class="review-phase-row" role="row"><strong>{{.Name}}</strong><span>{{.Duration}}</span><span>{{if .Content}}{{.Content}}{{else}}—{{end}}</span><span>{{if .Materials}}{{.Materials}}{{else}}—{{end}}</span><span>{{if .Notes}}{{.Notes}}{{else}}—{{end}}</span></div>
+          {{end}}
+        </div>
+        {{if .Lesson.Notes}}
+        <p class="lesson-notes-heading">Notes</p>
+        <ul class="lesson-notes-list">
+          {{range .Lesson.Notes}}<li><span>{{.Time}}</span>{{.Text}}</li>{{end}}
+        </ul>
+        {{end}}
+        {{else}}
+        <p class="empty-state">No lesson plan recorded for this day yet.</p>
+        {{end}}
+        <a class="review-open-link" href="/?date={{.Date}}#lesson-{{.SlotNumber}}">Open in agenda to edit →</a>
+      </div>
+    </details>
+    {{end}}
+  </div>
+  <script>
+    (function () {
+      const button = document.getElementById('toggle-all-lessons');
+      const rows = document.querySelectorAll('#review-list .review-row');
+      if (!button || rows.length === 0) return;
+
+      function setExpanded(expanded) {
+        rows.forEach(function (row) { row.open = expanded; });
+        button.textContent = expanded ? 'Collapse all' : 'Expand all';
+      }
+
+      button.addEventListener('click', function () {
+        setExpanded(button.textContent === 'Expand all');
+      });
+    })();
+  </script>
+  {{else}}
+  <p class="empty-state">No recorded lessons match those filters yet.</p>
+  {{end}}
+{{else}}
+<p class="empty-state">Choose a subject (and optionally a class) to review what's been taught.</p>
+{{end}}
+{{end}}

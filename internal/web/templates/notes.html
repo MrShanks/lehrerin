@@ -2,15 +2,24 @@
 <section class="page-heading">
   <div><p class="eyebrow">Lesson log</p><h1>Notes</h1><p class="lede">Everything you've flagged during lessons, most recent first. Click a note to jump back to that day.</p></div>
 </section>
+<form class="notes-filters" action="/notes" method="get">
+  <label>Student
+    <select name="student" onchange="this.form.submit()">
+      <option value="">All students</option>
+      {{range .NoteStudents}}<option value="{{.}}" {{if eq . $.NoteStudent}}selected{{end}}>{{.}}</option>{{end}}
+    </select>
+  </label>
+  {{if .NoteStudent}}<a href="/notes">Clear filter</a>{{end}}
+</form>
 {{if .Notes}}
 <div class="notes-search">
   <input type="search" id="notes-search" placeholder="Search notes…" aria-label="Search notes">
 </div>
 <div class="notes-list" id="notes-list">
   {{range .Notes}}
-  <a class="note-card" href="/?date={{.Date}}#lesson-{{.SlotNumber}}" data-search="{{.DateLabel}} {{.Subject}} {{.Class}} {{.Topic}} {{.Text}}">
+  <a class="note-card" href="/?date={{.Date}}#lesson-{{.SlotNumber}}" data-search="{{.DateLabel}} {{.Subject}} {{.Class}} {{.Topic}} {{.Student}} {{.Text}}">
     <div class="note-meta"><span>{{.DateLabel}}</span><span>{{.Time}}</span></div>
-    <div class="note-lesson">{{if .Subject}}{{.Subject}}{{else}}Open lesson{{end}}{{if .Class}} · Class {{.Class}}{{end}}{{if .Topic}} · {{.Topic}}{{end}}</div>
+    <div class="note-lesson">{{if .Subject}}{{.Subject}}{{else}}Open lesson{{end}}{{if .Class}} · Class {{.Class}}{{end}}{{if .Topic}} · {{.Topic}}{{end}}{{if .Student}} · {{.Student}}{{end}}</div>
     <p class="note-text">{{.Text}}</p>
   </a>
   {{end}}
@@ -106,6 +115,6 @@
   })();
 </script>
 {{else}}
-<p class="empty-state">No notes yet. Add one from any lesson card in the agenda.</p>
+<p class="empty-state">{{if .NoteStudent}}No notes tagged for {{.NoteStudent}} yet.{{else}}No notes yet. Add one from any lesson card in the agenda.{{end}}</p>
 {{end}}
 {{end}}

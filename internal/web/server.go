@@ -22,6 +22,11 @@ var assets embed.FS
 
 const dateLayout = "2006-01-02"
 
+var (
+	schoolYearStart = time.Date(2026, time.August, 10, 0, 0, 0, 0, time.Local)
+	schoolYearEnd   = time.Date(2027, time.July, 2, 0, 0, 0, 0, time.Local)
+)
+
 var lessonTimes = []string{
 	"07:30-08:15", "08:20-09:05", "09:10-09:55", "10:25-11:10", "11:15-12:00",
 	"13:45-14:30", "14:35-15:20", "15:30-16:15", "16:15-17:00",
@@ -44,8 +49,9 @@ type Phase struct {
 }
 
 type LessonNote struct {
-	Time string `json:"time"`
-	Text string `json:"text"`
+	Time    string `json:"time"`
+	Text    string `json:"text"`
+	Student string `json:"student"`
 }
 
 type Lesson struct {
@@ -74,6 +80,7 @@ type storeData struct {
 	School       string                    `json:"school"`
 	Subjects     []string                  `json:"subjects"`
 	Classes      []string                  `json:"classes"`
+	Students     []string                  `json:"students"`
 	Schedule     map[string][]Slot         `json:"schedule"`
 	Agendas      map[string]map[int]Lesson `json:"agendas"`
 	DayOverrides map[string][]DayOverride  `json:"dayOverrides"`
@@ -109,31 +116,39 @@ type subjectDay struct {
 }
 
 type pageData struct {
-	View          string
-	Teacher       string
-	School        string
-	Date          string
-	DateInput     string
-	PrevDate      string
-	NextDate      string
-	Week          []dayLink
-	Weeks         []weekRow
-	Lessons       []Lesson
-	Schedule      map[string][]Slot
-	Weekdays      []string
-	Subjects      []string
-	Classes       []string
-	DoneCount     int
-	TotalCount    int
-	SubjectFilter string
-	SubjectWeek   []subjectDay
-	SubjectCount  int
-	SchoolYear    string
-	YearStart     string
-	YearEnd       string
-	Overridden    bool
-	Overrides     []overrideView
-	Notes         []noteView
+	View            string
+	Teacher         string
+	School          string
+	Date            string
+	DateInput       string
+	PrevDate        string
+	NextDate        string
+	Week            []dayLink
+	Weeks           []weekRow
+	Lessons         []Lesson
+	Schedule        map[string][]Slot
+	Weekdays        []string
+	Subjects        []string
+	Classes         []string
+	Students        []string
+	DoneCount       int
+	TotalCount      int
+	SubjectFilter   string
+	SubjectWeek     []subjectDay
+	SubjectCount    int
+	SchoolYear      string
+	YearStart       string
+	YearEnd         string
+	Overridden      bool
+	Overrides       []overrideView
+	Notes           []noteView
+	NoteStudent     string
+	NoteStudents    []string
+	ReviewSubject   string
+	ReviewClass     string
+	ReviewReadyOnly bool
+	ReviewLessons   []reviewEntry
+	ReviewCount     int
 }
 
 type lessonData struct {
@@ -141,6 +156,7 @@ type lessonData struct {
 	Lesson   Lesson
 	Subjects []string
 	Classes  []string
+	Students []string
 }
 
 type overrideView struct {
@@ -158,7 +174,21 @@ type noteView struct {
 	Subject    string
 	Class      string
 	Topic      string
+	Student    string
 	SlotNumber int
+}
+
+type reviewEntry struct {
+	Date       string
+	DateLabel  string
+	Time       string
+	Subject    string
+	Class      string
+	Topic      string
+	Complete   bool
+	SlotNumber int
+	Lesson     Lesson
+	HasPlan    bool
 }
 
 type scheduleData struct {
@@ -181,8 +211,8 @@ func NewPersistentServer(path string) http.Handler {
 
 func newServer(path string) http.Handler {
 	functions := template.FuncMap{
-		"lessonData": func(date string, lesson Lesson, subjects, classes []string) lessonData {
-			return lessonData{Date: date, Lesson: lesson, Subjects: subjects, Classes: classes}
+		"lessonData": func(date string, lesson Lesson, subjects, classes, students []string) lessonData {
+			return lessonData{Date: date, Lesson: lesson, Subjects: subjects, Classes: classes, Students: students}
 		},
 		"scheduleData": func(weekday string, slot Slot) scheduleData {
 			return scheduleData{Weekday: weekday, Slot: slot}
@@ -208,6 +238,7 @@ func newServer(path string) http.Handler {
 	mux.HandleFunc("GET /year", server.year)
 	mux.HandleFunc("GET /schedule", server.schedule)
 	mux.HandleFunc("GET /notes", server.notes)
+	mux.HandleFunc("GET /review", server.review)
 	mux.HandleFunc("POST /agenda/{date}/lessons/{slot}", server.saveLesson)
 	mux.HandleFunc("POST /agenda/{date}/lessons/{slot}/notes", server.addLessonNote)
 	mux.HandleFunc("POST /agenda/{date}/override", server.saveDayOverride)
@@ -215,6 +246,7 @@ func newServer(path string) http.Handler {
 	mux.HandleFunc("POST /agenda/{date}/override/{index}/clear", server.clearDayOverride)
 	mux.HandleFunc("POST /schedule", server.saveSchedule)
 	mux.HandleFunc("POST /settings", server.saveSettings)
+	mux.HandleFunc("POST /reset", server.resetData)
 	return mux
 }
 
@@ -241,6 +273,7 @@ func defaultStoreData() storeData {
 		School:       "North Community School",
 		Subjects:     []string{"Mathematics", "English", "Biology", "Science", "History", "Geography", "Music", "Art", "Physical Education"},
 		Classes:      []string{"7A", "7B", "7C", "8A", "8B", "8C", "9A", "9B", "9C", "9D"},
+		Students:     []string{},
 		Schedule:     make(map[string][]Slot),
 		Agendas:      make(map[string]map[int]Lesson),
 		DayOverrides: make(map[string][]DayOverride),
@@ -314,6 +347,20 @@ func cloneLesson(lesson Lesson) Lesson {
 	return lesson
 }
 
+// lessonHasPlan reports whether a lesson has any recorded phase content or
+// notes, so the review page can skip rendering an empty plan breakdown.
+func lessonHasPlan(lesson Lesson) bool {
+	if len(lesson.Notes) > 0 {
+		return true
+	}
+	for _, phase := range lesson.Phases {
+		if phase.Duration != "" || phase.Content != "" || phase.Materials != "" || phase.Notes != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func (s *Store) saveLessonOverride(date time.Time, slotIndex int, lesson Lesson) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -326,7 +373,8 @@ func (s *Store) saveLessonOverride(date time.Time, slotIndex int, lesson Lesson)
 }
 
 // allNotes collects every lesson note across all days, most recent first.
-func (s *Store) allNotes() []noteView {
+// When student is non-empty, only notes tagged with that student are included.
+func (s *Store) allNotes(student string) []noteView {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	var notes []noteView
@@ -337,11 +385,14 @@ func (s *Store) allNotes() []noteView {
 		}
 		for _, lesson := range lessons {
 			for _, note := range lesson.Notes {
+				if student != "" && !strings.EqualFold(note.Student, student) {
+					continue
+				}
 				notes = append(notes, noteView{
 					Date: dateKey, DateLabel: date.Format("Monday, January 2, 2006"),
 					Time: note.Time, Text: note.Text,
 					Subject: lesson.Slot.Subject, Class: lesson.Slot.Class, Topic: lesson.Slot.Topic,
-					SlotNumber: lesson.Slot.Number,
+					Student: note.Student, SlotNumber: lesson.Slot.Number,
 				})
 			}
 		}
@@ -356,6 +407,82 @@ func (s *Store) allNotes() []noteView {
 		return notes[i].SlotNumber < notes[j].SlotNumber
 	})
 	return notes
+}
+
+// noteStudents lists every student that can be filtered on: the configured
+// roster plus any names typed directly into a note that aren't in it,
+// deduplicated case-insensitively and sorted alphabetically.
+func (s *Store) noteStudents() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	seen := make(map[string]bool)
+	var students []string
+	add := func(name string) {
+		name = strings.TrimSpace(name)
+		key := strings.ToLower(name)
+		if name == "" || seen[key] {
+			return
+		}
+		seen[key] = true
+		students = append(students, name)
+	}
+	for _, name := range s.data.Students {
+		add(name)
+	}
+	for _, lessons := range s.data.Agendas {
+		for _, lesson := range lessons {
+			for _, note := range lesson.Notes {
+				add(note.Student)
+			}
+		}
+	}
+	sort.Slice(students, func(i, j int) bool {
+		return strings.ToLower(students[i]) < strings.ToLower(students[j])
+	})
+	return students
+}
+
+// lessonsFor collects every lesson matching subject and/or class across the
+// whole school year, oldest first, so it reads like a coverage log. It merges
+// the weekly timetable template with any per-day edits, same as the agenda
+// page, so lessons that were never individually opened still show up. When
+// readyOnly is true, only lessons marked ready to teach are included.
+func (s *Store) lessonsFor(subject, class string, readyOnly bool) []reviewEntry {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	var entries []reviewEntry
+	for date := schoolYearStart; !date.After(schoolYearEnd); date = date.AddDate(0, 0, 1) {
+		if date.Weekday() == time.Saturday || date.Weekday() == time.Sunday {
+			continue
+		}
+		for _, lesson := range s.agendaLocked(date) {
+			if lesson.Slot.Subject == "" && lesson.Slot.Class == "" {
+				continue
+			}
+			if subject != "" && !strings.EqualFold(lesson.Slot.Subject, subject) {
+				continue
+			}
+			if class != "" && !strings.EqualFold(lesson.Slot.Class, class) {
+				continue
+			}
+			if readyOnly && !lesson.Complete {
+				continue
+			}
+			entries = append(entries, reviewEntry{
+				Date: date.Format(dateLayout), DateLabel: date.Format("Monday, January 2, 2006"),
+				Time: lesson.Slot.Time, Subject: lesson.Slot.Subject, Class: lesson.Slot.Class,
+				Topic: lesson.Slot.Topic, Complete: lesson.Complete, SlotNumber: lesson.Slot.Number,
+				Lesson: lesson, HasPlan: lessonHasPlan(lesson),
+			})
+		}
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].Date != entries[j].Date {
+			return entries[i].Date < entries[j].Date
+		}
+		return entries[i].SlotNumber < entries[j].SlotNumber
+	})
+	return entries
 }
 
 func (s *Store) dayOverrides(date time.Time) []DayOverride {
@@ -403,6 +530,15 @@ func (s *Store) removeDayOverride(date time.Time, index int) error {
 	return s.persistLocked()
 }
 
+// reset wipes every lesson, note, event, and setting, restoring the app to
+// its default starting state.
+func (s *Store) reset() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.data = defaultStoreData()
+	return s.persistLocked()
+}
+
 func (s *Store) persistLocked() error {
 	if s.path == "" {
 		return nil
@@ -434,9 +570,27 @@ func (s *Server) year(w http.ResponseWriter, _ *http.Request) {
 	s.render(w, "layout", data)
 }
 
-func (s *Server) notes(w http.ResponseWriter, _ *http.Request) {
+func (s *Server) notes(w http.ResponseWriter, r *http.Request) {
 	data := s.baseData("notes")
-	data.Notes = s.store.allNotes()
+	data.NoteStudent = strings.TrimSpace(r.URL.Query().Get("student"))
+	data.NoteStudents = s.store.noteStudents()
+	data.Notes = s.store.allNotes(data.NoteStudent)
+	s.render(w, "layout", data)
+}
+
+func (s *Server) review(w http.ResponseWriter, r *http.Request) {
+	data := s.baseData("review")
+	data.ReviewSubject = strings.TrimSpace(r.URL.Query().Get("subject"))
+	data.ReviewClass = strings.TrimSpace(r.URL.Query().Get("class"))
+	if r.URL.Query().Has("ready") {
+		data.ReviewReadyOnly = r.URL.Query().Get("ready") != "0"
+	} else {
+		data.ReviewReadyOnly = true
+	}
+	if data.ReviewSubject != "" || data.ReviewClass != "" {
+		data.ReviewLessons = s.store.lessonsFor(data.ReviewSubject, data.ReviewClass, data.ReviewReadyOnly)
+		data.ReviewCount = len(data.ReviewLessons)
+	}
 	s.render(w, "layout", data)
 }
 
@@ -512,6 +666,7 @@ func (s *Server) baseData(view string) pageData {
 	return pageData{
 		View: view, Teacher: s.store.data.Teacher, School: s.store.data.School,
 		Subjects: append([]string(nil), s.store.data.Subjects...), Classes: append([]string(nil), s.store.data.Classes...),
+		Students: append([]string(nil), s.store.data.Students...),
 		Weekdays: weekdays(), SchoolYear: "2026/2027", YearStart: "August 10, 2026", YearEnd: "July 2, 2027",
 	}
 }
@@ -555,6 +710,7 @@ func (s *Server) saveLesson(w http.ResponseWriter, r *http.Request) {
 		Date: date.Format(dateLayout), Lesson: lesson,
 		Subjects: append([]string(nil), s.store.data.Subjects...),
 		Classes:  append([]string(nil), s.store.data.Classes...),
+		Students: append([]string(nil), s.store.data.Students...),
 	}
 	s.store.mu.RUnlock()
 	s.render(w, "lesson-card", data)
@@ -580,10 +736,11 @@ func (s *Server) addLessonNote(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Note text is required", http.StatusBadRequest)
 		return
 	}
+	student := strings.TrimSpace(r.FormValue("student"))
 
 	lessons := s.store.agenda(date)
 	lesson := lessons[slotIndex]
-	lesson.Notes = append(lesson.Notes, LessonNote{Time: time.Now().Format("15:04"), Text: text})
+	lesson.Notes = append(lesson.Notes, LessonNote{Time: time.Now().Format("15:04"), Text: text, Student: student})
 	if err := s.store.saveLessonOverride(date, slotIndex, lesson); err != nil {
 		http.Error(w, "Could not save note", http.StatusInternalServerError)
 		return
@@ -594,6 +751,7 @@ func (s *Server) addLessonNote(w http.ResponseWriter, r *http.Request) {
 		Date: date.Format(dateLayout), Lesson: lesson,
 		Subjects: append([]string(nil), s.store.data.Subjects...),
 		Classes:  append([]string(nil), s.store.data.Classes...),
+		Students: append([]string(nil), s.store.data.Students...),
 	}
 	s.store.mu.RUnlock()
 	s.render(w, "lesson-card", data)
@@ -738,6 +896,7 @@ func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 	s.store.data.School = strings.TrimSpace(r.FormValue("school"))
 	s.store.data.Subjects = splitLines(r.FormValue("subjects"))
 	s.store.data.Classes = splitLines(r.FormValue("classes"))
+	s.store.data.Students = splitLines(r.FormValue("students"))
 	err := s.store.persistLocked()
 	s.store.mu.Unlock()
 	if err != nil {
@@ -745,6 +904,15 @@ func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	w.Header().Set("HX-Redirect", "/schedule")
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) resetData(w http.ResponseWriter, _ *http.Request) {
+	if err := s.store.reset(); err != nil {
+		http.Error(w, "Could not reset data", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("HX-Redirect", "/")
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -772,10 +940,8 @@ func weekLinks(selected time.Time) []dayLink {
 }
 
 func schoolWeeks(eventCounts map[string]int) []weekRow {
-	start := time.Date(2026, time.August, 10, 0, 0, 0, 0, time.Local)
-	end := time.Date(2027, time.July, 2, 0, 0, 0, 0, time.Local)
 	var weeks []weekRow
-	for monday := start; !monday.After(end); monday = monday.AddDate(0, 0, 7) {
+	for monday := schoolYearStart; !monday.After(schoolYearEnd); monday = monday.AddDate(0, 0, 7) {
 		_, number := monday.ISOWeek()
 		row := weekRow{Number: number}
 		for day := 0; day < 5; day++ {
