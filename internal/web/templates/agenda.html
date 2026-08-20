@@ -2,11 +2,19 @@
 <section class="page-heading agenda-heading">
   <div><p class="eyebrow">Daily agenda</p><h1>{{.Date}}</h1><p class="lede">Plan each lesson from arrival to assessment, with materials and differentiation close at hand.</p></div>
   <div class="date-controls">
-    <button class="icon-link print-button" type="button" onclick="window.print()" aria-label="Print or save as PDF">Print / PDF</button>
-    <button class="secondary" type="button" id="add-override" command="show-modal" commandfor="override-dialog">Override schedule</button>
-    <a class="icon-link" href="/?date={{.PrevDate}}{{if .SubjectFilter}}&amp;subject={{.SubjectFilter | urlquery}}{{end}}" aria-label="{{if .SubjectFilter}}Previous week{{else}}Previous school day{{end}}">←</a>
-    <form action="/" method="get"><label class="sr-only" for="date">Choose date</label><input id="date" name="date" type="date" value="{{.DateInput}}" onchange="this.form.submit()">{{if .SubjectFilter}}<input type="hidden" name="subject" value="{{.SubjectFilter}}">{{end}}</form>
-    <a class="icon-link" href="/?date={{.NextDate}}{{if .SubjectFilter}}&amp;subject={{.SubjectFilter | urlquery}}{{end}}" aria-label="{{if .SubjectFilter}}Next week{{else}}Next school day{{end}}">→</a>
+    <a class="secondary button-link agenda-action" href="/download/day?date={{.DateInput}}">Download day</a>
+    <a class="secondary button-link agenda-action" href="/download/week?date={{.DateInput}}">Download week</a>
+    <button class="secondary agenda-action" type="button" id="add-override" command="show-modal" commandfor="override-dialog">Override schedule</button>
+    <form class="undo-form" method="post" action="/undo">
+      <input type="hidden" name="date" value="{{.DateInput}}">
+      {{if .SubjectFilter}}<input type="hidden" name="subject" value="{{.SubjectFilter}}">{{end}}
+      {{if .ClassFilter}}<input type="hidden" name="class" value="{{.ClassFilter}}">{{end}}
+      <input type="hidden" name="lesson" data-undo-lesson>
+      <button class="secondary agenda-action" type="submit" aria-label="Undo last change" title="Undo last change">Undo</button>
+    </form>
+    <a class="icon-link" href="/?date={{.PrevDate}}{{if .SubjectFilter}}&amp;subject={{.SubjectFilter | urlquery}}{{end}}{{if .ClassFilter}}&amp;class={{.ClassFilter | urlquery}}{{end}}" aria-label="Previous week">←</a>
+    <form action="/" method="get"><label class="sr-only" for="date">Choose date</label><input id="date" name="date" type="date" value="{{.DateInput}}" onchange="this.form.submit()">{{if .SubjectFilter}}<input type="hidden" name="subject" value="{{.SubjectFilter}}">{{end}}{{if .ClassFilter}}<input type="hidden" name="class" value="{{.ClassFilter}}">{{end}}</form>
+    <a class="icon-link" href="/?date={{.NextDate}}{{if .SubjectFilter}}&amp;subject={{.SubjectFilter | urlquery}}{{end}}{{if .ClassFilter}}&amp;class={{.ClassFilter | urlquery}}{{end}}" aria-label="Next week">→</a>
   </div>
 </section>
 <form class="subject-filter" action="/" method="get">
@@ -16,20 +24,25 @@
     <option value="">All subjects · daily agenda</option>
     {{range .Subjects}}<option value="{{.}}" {{if eq . $.SubjectFilter}}selected{{end}}>{{.}}</option>{{end}}
   </select>
-  {{if .SubjectFilter}}<a href="/?date={{.DateInput}}">Clear filter</a>{{end}}
+  <label for="class-filter">Class</label>
+  <select id="class-filter" name="class" onchange="this.form.submit()">
+    <option value="">All classes</option>
+    {{range .Classes}}<option value="{{.}}" {{if eq . $.ClassFilter}}selected{{end}}>{{.}}</option>{{end}}
+  </select>
+  {{if or .SubjectFilter .ClassFilter}}<a href="/?date={{.DateInput}}">Clear filters</a>{{end}}
 </form>
 <nav class="week-strip" aria-label="This week">
-  {{range .Week}}<a href="/?date={{.Date}}{{if $.SubjectFilter}}&amp;subject={{$.SubjectFilter | urlquery}}{{end}}" {{if .Selected}}aria-current="date"{{end}}><span>{{.Day}}</span><strong>{{.Number}}</strong>{{if .Today}}<small>Today</small>{{end}}</a>{{end}}
+  {{range .Week}}<a href="/?date={{.Date}}{{if $.SubjectFilter}}&amp;subject={{$.SubjectFilter | urlquery}}{{end}}{{if $.ClassFilter}}&amp;class={{$.ClassFilter | urlquery}}{{end}}" {{if .Selected}}aria-current="date"{{end}}><span>{{.Day}}</span><strong>{{.Number}}</strong>{{if .Today}}<small>Today</small>{{end}}</a>{{end}}
 </nav>
-{{if .SubjectFilter}}
+{{if or .SubjectFilter .ClassFilter}}
 <section class="subject-week" aria-labelledby="subject-week-heading">
-  <div class="subject-week-heading"><div><p class="eyebrow">Weekly subject view</p><h2 id="subject-week-heading">{{.SubjectFilter}} at a glance</h2></div><span>{{.SubjectCount}} {{if eq .SubjectCount 1}}lesson{{else}}lessons{{end}} this week</span></div>
+  <div class="subject-week-heading"><div><p class="eyebrow">Weekly filtered view</p><h2 id="subject-week-heading">{{if .SubjectFilter}}{{.SubjectFilter}}{{else}}All subjects{{end}}{{if .ClassFilter}} · {{.ClassFilter}}{{end}} at a glance</h2></div><span>{{.SubjectCount}} {{if eq .SubjectCount 1}}lesson{{else}}lessons{{end}} this week</span></div>
   <div class="subject-week-grid">
     {{range .SubjectWeek}}
     <section class="subject-day">
       <a class="subject-day-heading" href="/?date={{.Date}}"><span>{{.Day}}</span><strong>{{.Number}}</strong><small>{{.LessonCount}} {{if eq .LessonCount 1}}lesson{{else}}lessons{{end}}</small></a>
       <div class="subject-day-lessons">
-        {{$dayDate := .Date}}{{range .Lessons}}<a class="subject-lesson{{if .Complete}} complete{{end}}" href="/?date={{$dayDate}}#lesson-{{.Slot.Number}}"><span>{{.Slot.Time}}</span><strong>{{if .Slot.Class}}Class {{.Slot.Class}}{{else}}No class{{end}}</strong><small>{{if .Slot.Topic}}{{.Slot.Topic}}{{else}}Lesson {{.Slot.Number}}{{end}}</small></a>{{else}}<p>No {{$.SubjectFilter}} lessons</p>{{end}}
+        {{$dayDate := .Date}}{{range .Lessons}}<a class="subject-lesson{{if .Complete}} complete{{end}}" href="/?date={{$dayDate}}{{if $.SubjectFilter}}&amp;subject={{$.SubjectFilter | urlquery}}{{end}}{{if $.ClassFilter}}&amp;class={{$.ClassFilter | urlquery}}{{end}}#lesson-{{.Slot.Number}}"><span>{{.Slot.Time}}</span><strong>{{if .Slot.Class}}Class {{.Slot.Class}}{{else}}No class{{end}}</strong><small>{{if .Slot.Topic}}{{.Slot.Topic}}{{else}}Lesson {{.Slot.Number}}{{end}}</small></a>{{else}}<p>No {{if $.SubjectFilter}}{{$.SubjectFilter}} {{end}}{{if $.ClassFilter}}for {{$.ClassFilter}} {{end}}lessons</p>{{end}}
       </div>
     </section>
     {{end}}
@@ -176,7 +189,7 @@
     <span class="lesson-title"><strong>{{if .Lesson.Slot.Subject}}{{.Lesson.Slot.Subject}}{{else}}Open lesson{{end}}</strong><small>{{if .Lesson.Slot.Class}}Class {{.Lesson.Slot.Class}}{{end}}{{if .Lesson.Slot.Topic}} · {{.Lesson.Slot.Topic}}{{end}}</small></span>
     <span class="lesson-state">{{if .Lesson.Complete}}Ready{{else}}Plan{{end}}</span><span class="chevron" aria-hidden="true">⌄</span>
   </summary>
-  <form class="lesson-plan" hx-post="/agenda/{{.Date}}/lessons/{{.Lesson.Slot.Number}}" hx-target="#lesson-{{.Lesson.Slot.Number}}" hx-swap="outerHTML">
+  <form class="lesson-plan" data-autosave-form hx-post="/agenda/{{.Date}}/lessons/{{.Lesson.Slot.Number}}" hx-swap="none">
     <div class="lesson-meta">
       <label>Time<input name="time" value="{{.Lesson.Slot.Time}}" required></label>
       <label>Subject<input name="subject" list="subjects" value="{{.Lesson.Slot.Subject}}" placeholder="Choose subject"></label>
@@ -189,7 +202,7 @@
       <div class="phase-row" role="row"><strong>{{$phase.Name}}</strong><input name="phase_{{$index}}_duration" value="{{$phase.Duration}}" placeholder="10 min"><textarea name="phase_{{$index}}_content" rows="2" placeholder="What will happen?">{{$phase.Content}}</textarea><textarea name="phase_{{$index}}_materials" rows="2" placeholder="Resources">{{$phase.Materials}}</textarea><textarea name="phase_{{$index}}_notes" rows="2" placeholder="Support, extension, notes">{{$phase.Notes}}</textarea></div>
       {{end}}
     </div>
-    <div class="lesson-actions"><label class="ready-toggle"><input type="checkbox" name="complete" {{if .Lesson.Complete}}checked{{end}}> Ready to teach</label><button class="primary" type="submit">Save lesson</button></div>
+    <div class="lesson-actions"><label class="ready-toggle"><input type="checkbox" name="complete" {{if .Lesson.Complete}}checked{{end}}> Ready to teach</label><span class="autosave-hint">Changes save automatically</span></div>
   </form>
   <div class="lesson-notes">
     <p class="lesson-notes-heading">Notes</p>

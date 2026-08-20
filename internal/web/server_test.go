@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -78,6 +79,20 @@ func TestAgendaSubjectFilterShowsWholeWeek(t *testing.T) {
 	assertContains(t, weekly, "Class 8B")
 	if strings.Contains(weekly, "Class 9A") {
 		t.Fatal("subject week contains an unrelated English lesson")
+	}
+
+	classWeek := request(t, server, http.MethodGet, "/?date=2026-08-12&subject=Mathematics&class=7A", nil, cookie)
+	assertContains(t, classWeek, "Mathematics · 7A at a glance")
+	assertContains(t, classWeek, "Class 7A")
+	if strings.Contains(classWeek, "Class 8B") {
+		t.Fatal("class filter contains a different Mathematics class")
+	}
+
+	classOnly := request(t, server, http.MethodGet, "/?date=2026-08-12&class=7A", nil, cookie)
+	assertContains(t, classOnly, "All subjects · 7A at a glance")
+	assertContains(t, classOnly, "Class 7A")
+	if strings.Contains(classOnly, "Class 8B") || strings.Contains(classOnly, "Class 9A") {
+		t.Fatal("class-only filter contains a lesson from another class")
 	}
 }
 
@@ -555,6 +570,116 @@ func TestRestoreRejectsInvalidBackup(t *testing.T) {
 	response := multipartRequest(t, handler, "/restore", []byte(`{"not":"a planner"}`), cookie)
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("invalid restore returned %d, want 400", response.Code)
+	}
+}
+
+func TestDownloadDayIncludesDetailedPlan(t *testing.T) {
+	handler := NewServer()
+	cookie := signUp(t, handler)
+	request(t, handler, http.MethodPost, "/agenda/2026-08-20/lessons/1", url.Values{
+		"time": {"07:30-08:15"}, "subject": {"Biology"}, "class": {"8C"}, "topic": {"Fair experiments"},
+		"phase_1_content": {"Design the investigation"}, "phase_1_materials": {"Planning sheet"},
+		"phase_1_notes": {"Check control variables"},
+	}, cookie)
+
+	response := requestWithResponse(t, handler, http.MethodGet, "/download/day?date=2026-08-20", nil, cookie)
+	if response.Code != http.StatusOK {
+		t.Fatalf("day download returned %d", response.Code)
+	}
+	if got := response.Header().Get("Content-Disposition"); got != "attachment; filename=lehrerin-day-2026-08-20.html" {
+		t.Fatalf("day download disposition = %q", got)
+	}
+	assertContains(t, response.Body.String(), "Fair experiments")
+	assertContains(t, response.Body.String(), "Planning sheet")
+	assertContains(t, response.Body.String(), "Check control variables")
+}
+
+func TestDownloadWeekUsesSelectedDateAndCurrentAccount(t *testing.T) {
+	handler := NewServer()
+	accountA := signUpAs(t, handler, "teacher-a", "password1234")
+	accountB := signUpAs(t, handler, "teacher-b", "password1234")
+	request(t, handler, http.MethodPost, "/agenda/2026-08-19/lessons/1", url.Values{
+		"time": {"07:30-08:15"}, "subject": {"Mathematics"}, "class": {"7B"}, "topic": {"A weekly plan"},
+	}, accountA)
+	request(t, handler, http.MethodPost, "/agenda/2026-08-19/lessons/1", url.Values{
+		"time": {"07:30-08:15"}, "subject": {"English"}, "class": {"9A"}, "topic": {"B private plan"},
+	}, accountB)
+
+	response := requestWithResponse(t, handler, http.MethodGet, "/download/week?date=2026-08-20", nil, accountA)
+	if response.Code != http.StatusOK {
+		t.Fatalf("week download returned %d", response.Code)
+	}
+	if got := response.Header().Get("Content-Disposition"); got != "attachment; filename=lehrerin-week-2026-08-17.html" {
+		t.Fatalf("week download disposition = %q", got)
+	}
+	assertContains(t, response.Body.String(), "A weekly plan")
+	if strings.Contains(response.Body.String(), "B private plan") {
+		t.Fatal("week download contains another account's lesson")
+	}
+}
+
+func TestUndoRestoresPreviousLessonAndCapsAt100Entries(t *testing.T) {
+	handler := NewServer()
+	cookie := signUp(t, handler)
+	server := handler.(*http.ServeMux)
+
+	for index := 0; index < 101; index++ {
+		request(t, server, http.MethodPost, "/agenda/2026-08-12/lessons/1", url.Values{
+			"time": {lessonTimes[0]}, "subject": {"Mathematics"}, "class": {"7A"}, "topic": {fmt.Sprintf("Revision %d", index)},
+		}, cookie)
+	}
+
+	assertUndoRedirect(t, server, cookie)
+	body := request(t, server, http.MethodGet, "/?date=2026-08-12", nil, cookie)
+	assertContains(t, body, "Revision 99")
+	if strings.Contains(body, "Revision 100") {
+		t.Fatal("undo did not restore the previous lesson")
+	}
+
+	for index := 0; index < 99; index++ {
+		assertUndoRedirect(t, server, cookie)
+	}
+	oldest := request(t, server, http.MethodGet, "/?date=2026-08-12", nil, cookie)
+	assertContains(t, oldest, "Revision 0")
+	assertEmptyUndoRedirect(t, server, cookie)
+	stillOldest := request(t, server, http.MethodGet, "/?date=2026-08-12", nil, cookie)
+	assertContains(t, stillOldest, "Revision 0")
+}
+
+func TestUndoHistoryIsIsolatedPerAccount(t *testing.T) {
+	handler := NewServer()
+	accountA := signUpAs(t, handler, "teacher-a", "password1234")
+	accountB := signUpAs(t, handler, "teacher-b", "password1234")
+
+	request(t, handler, http.MethodPost, "/agenda/2026-08-12/lessons/1", url.Values{
+		"time": {lessonTimes[0]}, "subject": {"Mathematics"}, "class": {"7A"}, "topic": {"A lesson"},
+	}, accountA)
+	request(t, handler, http.MethodPost, "/agenda/2026-08-12/lessons/1", url.Values{
+		"time": {lessonTimes[0]}, "subject": {"English"}, "class": {"8B"}, "topic": {"B lesson"},
+	}, accountB)
+
+	assertUndoRedirect(t, handler, accountA)
+	bodyA := request(t, handler, http.MethodGet, "/?date=2026-08-12", nil, accountA)
+	if strings.Contains(bodyA, "A lesson") {
+		t.Fatal("account A undo did not restore its previous state")
+	}
+	bodyB := request(t, handler, http.MethodGet, "/?date=2026-08-12", nil, accountB)
+	assertContains(t, bodyB, "B lesson")
+}
+
+func assertUndoRedirect(t *testing.T, handler http.Handler, cookie string) {
+	t.Helper()
+	response := requestWithResponse(t, handler, http.MethodPost, "/undo", url.Values{"date": {"2026-08-12"}}, cookie)
+	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/?date=2026-08-12" {
+		t.Fatalf("undo returned %d with location %q", response.Code, response.Header().Get("Location"))
+	}
+}
+
+func assertEmptyUndoRedirect(t *testing.T, handler http.Handler, cookie string) {
+	t.Helper()
+	response := requestWithResponse(t, handler, http.MethodPost, "/undo", url.Values{"date": {"2026-08-12"}}, cookie)
+	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/?date=2026-08-12&undo=empty" {
+		t.Fatalf("empty undo returned %d with location %q", response.Code, response.Header().Get("Location"))
 	}
 }
 

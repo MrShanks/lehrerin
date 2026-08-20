@@ -66,7 +66,6 @@
   <datalist id="subjects">{{range .Subjects}}<option value="{{.}}">{{end}}</datalist>
   <datalist id="classes">{{range .Classes}}<option value="{{.}}">{{end}}</datalist>
   <datalist id="students">{{range .Students}}<option value="{{.}}">{{end}}</datalist>
-  <div id="save-toast" role="status">Saved</div>
   <dialog id="unsaved-dialog">
     <form method="dialog" class="unsaved-form">
       <p>You have unsaved timetable changes. What would you like to do?</p>
@@ -77,12 +76,14 @@
       </menu>
     </form>
   </dialog>
+  <dialog id="undo-empty-dialog">
+    <form method="dialog" class="unsaved-form">
+      <p>There are no more changes to undo.</p>
+      <button class="primary" value="close">Close</button>
+    </form>
+  </dialog>
   <script>
-    document.body.addEventListener('lessonSaved', function () {
-      const toast = document.getElementById('save-toast');
-      toast.classList.add('visible');
-      window.setTimeout(() => toast.classList.remove('visible'), 1200);
-    });
+    if ({{if .UndoEmpty}}true{{else}}false{{end}}) document.getElementById('undo-empty-dialog').showModal();
 
     document.body.addEventListener('htmx:afterSwap', function (event) {
       const swapped = event.target;
@@ -92,22 +93,56 @@
     });
 
     (function () {
-      function openLessonFromHash() {
-        if (!location.hash) return;
-        let target;
-        try {
-          target = document.querySelector(location.hash);
-        } catch (e) {
-          return;
-        }
-        if (!target || !target.matches('.lesson-card')) return;
-        target.open = true;
-        target.classList.add('highlight');
-        target.scrollIntoView({ block: 'start' });
-        window.setTimeout(() => target.classList.remove('highlight'), 2500);
+      const timers = new WeakMap();
+
+      function scheduleAutosave(form, delay) {
+        window.clearTimeout(timers.get(form));
+        timers.set(form, window.setTimeout(function () {
+          if (!form.isConnected) return;
+          htmx.trigger(form, 'submit');
+        }, delay));
       }
-      openLessonFromHash();
-      window.addEventListener('hashchange', openLessonFromHash);
+
+      document.addEventListener('input', function (event) {
+        const form = event.target.closest('[data-autosave-form]');
+        if (form) scheduleAutosave(form, 700);
+      });
+
+      document.addEventListener('change', function (event) {
+        const form = event.target.closest('[data-autosave-form]');
+        if (form) scheduleAutosave(form, 0);
+      });
+    })();
+
+    (function () {
+      document.addEventListener('submit', function (event) {
+        const form = event.target.closest('.undo-form');
+        if (!form) return;
+        const openLesson = document.querySelector('.lesson-card[open]');
+        const undoLesson = form.querySelector('[data-undo-lesson]');
+        if (undoLesson) {
+          undoLesson.value = openLesson ? openLesson.id.replace('lesson-', '') : '';
+          sessionStorage.setItem('lehrerin-undo-view', JSON.stringify({ lesson: undoLesson.value, scrollY: window.scrollY }));
+        }
+      });
+
+      const savedView = sessionStorage.getItem('lehrerin-undo-view');
+      if (!savedView) return;
+      sessionStorage.removeItem('lehrerin-undo-view');
+      try {
+        const view = JSON.parse(savedView);
+        const lesson = view.lesson && document.getElementById('lesson-' + view.lesson);
+        if (lesson) lesson.open = true;
+        if (typeof view.scrollY === 'number') {
+          const root = document.documentElement;
+          const previousBehavior = root.style.scrollBehavior;
+          root.style.scrollBehavior = 'auto';
+          window.scrollTo(0, view.scrollY);
+          root.style.scrollBehavior = previousBehavior;
+        }
+      } catch (error) {
+        sessionStorage.removeItem('lehrerin-undo-view');
+      }
     })();
 
     (function () {

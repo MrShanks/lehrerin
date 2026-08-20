@@ -9,8 +9,10 @@ import (
 	"io"
 	"io/fs"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strconv"
 	"strings"
@@ -88,10 +90,13 @@ type storeData struct {
 }
 
 type Store struct {
-	mu   sync.RWMutex
-	path string
-	data storeData
+	mu      sync.RWMutex
+	path    string
+	data    storeData
+	history []storeData
 }
+
+const maxHistoryEntries = 100
 
 type dayLink struct {
 	Date       string
@@ -135,6 +140,7 @@ type pageData struct {
 	DoneCount       int
 	TotalCount      int
 	SubjectFilter   string
+	ClassFilter     string
 	SubjectWeek     []subjectDay
 	SubjectCount    int
 	SchoolYear      string
@@ -148,6 +154,7 @@ type pageData struct {
 	ReviewSubject   string
 	ReviewClass     string
 	ReviewReadyOnly bool
+	UndoEmpty       bool
 	ReviewLessons   []reviewEntry
 	ReviewCount     int
 }
@@ -244,6 +251,8 @@ func newServer(dataDir string) http.Handler {
 	protected.HandleFunc("GET /schedule", server.schedule)
 	protected.HandleFunc("GET /notes", server.notes)
 	protected.HandleFunc("GET /review", server.review)
+	protected.HandleFunc("GET /download/day", server.downloadDay)
+	protected.HandleFunc("GET /download/week", server.downloadWeek)
 	protected.HandleFunc("POST /agenda/{date}/lessons/{slot}", server.saveLesson)
 	protected.HandleFunc("POST /agenda/{date}/lessons/{slot}/notes", server.addLessonNote)
 	protected.HandleFunc("POST /agenda/{date}/override", server.saveDayOverride)
@@ -252,6 +261,7 @@ func newServer(dataDir string) http.Handler {
 	protected.HandleFunc("POST /schedule", server.saveSchedule)
 	protected.HandleFunc("POST /settings", server.saveSettings)
 	protected.HandleFunc("POST /reset", server.resetData)
+	protected.HandleFunc("POST /undo", server.undo)
 	protected.HandleFunc("GET /backup", server.downloadBackup)
 	protected.HandleFunc("POST /restore", server.restoreBackup)
 	protected.HandleFunc("POST /logout", server.logout)
@@ -381,6 +391,10 @@ func (s *Store) saveLessonOverride(date time.Time, slotIndex int, lesson Lesson)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	key := date.Format(dateLayout)
+	if existing, ok := s.data.Agendas[key][slotIndex]; ok && reflect.DeepEqual(existing, lesson) {
+		return nil
+	}
+	s.pushHistoryLocked()
 	if s.data.Agendas[key] == nil {
 		s.data.Agendas[key] = make(map[int]Lesson)
 	}
@@ -510,6 +524,7 @@ func (s *Store) dayOverrides(date time.Time) []DayOverride {
 func (s *Store) addDayOverride(dates []time.Time, override DayOverride) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pushHistoryLocked()
 	for _, date := range dates {
 		key := date.Format(dateLayout)
 		s.data.DayOverrides[key] = append(s.data.DayOverrides[key], override)
@@ -525,6 +540,7 @@ func (s *Store) updateDayOverride(date time.Time, index int, override DayOverrid
 	if index < 0 || index >= len(overrides) {
 		return errors.New("event index out of range")
 	}
+	s.pushHistoryLocked()
 	overrides[index] = override
 	return s.persistLocked()
 }
@@ -537,6 +553,7 @@ func (s *Store) removeDayOverride(date time.Time, index int) error {
 	if index < 0 || index >= len(overrides) {
 		return errors.New("event index out of range")
 	}
+	s.pushHistoryLocked()
 	overrides = append(overrides[:index], overrides[index+1:]...)
 	if len(overrides) == 0 {
 		delete(s.data.DayOverrides, key)
@@ -551,7 +568,39 @@ func (s *Store) removeDayOverride(date time.Time, index int) error {
 func (s *Store) reset() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.pushHistoryLocked()
 	s.data = defaultStoreData()
+	return s.persistLocked()
+}
+
+func (s *Store) pushHistoryLocked() {
+	s.history = append(s.history, cloneStoreData(s.data))
+	if len(s.history) > maxHistoryEntries {
+		s.history = s.history[len(s.history)-maxHistoryEntries:]
+	}
+}
+
+func cloneStoreData(data storeData) storeData {
+	contents, err := json.Marshal(data)
+	if err != nil {
+		return defaultStoreData()
+	}
+	var clone storeData
+	if err := json.Unmarshal(contents, &clone); err != nil {
+		return defaultStoreData()
+	}
+	return clone
+}
+
+func (s *Store) undo() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.history) == 0 {
+		return errors.New("nothing to undo")
+	}
+	previous := s.history[len(s.history)-1]
+	s.history = s.history[:len(s.history)-1]
+	s.data = previous
 	return s.persistLocked()
 }
 
@@ -572,7 +621,9 @@ func (s *Store) persistLocked() error {
 func (s *Server) agenda(w http.ResponseWriter, r *http.Request) {
 	date := requestedDate(r.URL.Query().Get("date"))
 	store := s.storeFor(r)
-	s.render(w, "layout", s.agendaData(store, date, strings.TrimSpace(r.URL.Query().Get("subject"))))
+	data := s.agendaData(store, date, strings.TrimSpace(r.URL.Query().Get("subject")), strings.TrimSpace(r.URL.Query().Get("class")))
+	data.UndoEmpty = r.URL.Query().Get("undo") == "empty"
+	s.render(w, "layout", data)
 }
 
 func (s *Server) year(w http.ResponseWriter, r *http.Request) {
@@ -623,21 +674,17 @@ func (s *Server) schedule(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "layout", data)
 }
 
-func (s *Server) agendaData(store *Store, date time.Time, subject string) pageData {
+func (s *Server) agendaData(store *Store, date time.Time, subject, class string) pageData {
 	data := s.baseData(store, "agenda")
 	data.Date = date.Format("Monday, January 2, 2006")
 	data.DateInput = date.Format(dateLayout)
-	if subject == "" {
-		data.PrevDate = previousWeekday(date).Format(dateLayout)
-		data.NextDate = nextWeekday(date).Format(dateLayout)
-	} else {
-		data.PrevDate = date.AddDate(0, 0, -7).Format(dateLayout)
-		data.NextDate = date.AddDate(0, 0, 7).Format(dateLayout)
-	}
+	data.PrevDate = date.AddDate(0, 0, -7).Format(dateLayout)
+	data.NextDate = date.AddDate(0, 0, 7).Format(dateLayout)
 	data.Week = weekLinks(date)
 	data.SubjectFilter = subject
-	if subject != "" {
-		data.SubjectWeek, data.SubjectCount = s.subjectWeek(store, date, subject)
+	data.ClassFilter = class
+	if subject != "" || class != "" {
+		data.SubjectWeek, data.SubjectCount = s.subjectWeek(store, date, subject, class)
 	}
 	if overrides := store.dayOverrides(date); len(overrides) > 0 {
 		data.Overridden = true
@@ -660,7 +707,7 @@ func (s *Server) agendaData(store *Store, date time.Time, subject string) pageDa
 	return data
 }
 
-func (s *Server) subjectWeek(store *Store, selected time.Time, subject string) ([]subjectDay, int) {
+func (s *Server) subjectWeek(store *Store, selected time.Time, subject, class string) ([]subjectDay, int) {
 	start := selected.AddDate(0, 0, -weekdayOffset(selected.Weekday()))
 	days := make([]subjectDay, 5)
 	total := 0
@@ -668,7 +715,7 @@ func (s *Server) subjectWeek(store *Store, selected time.Time, subject string) (
 		date := start.AddDate(0, 0, index)
 		var matches []Lesson
 		for _, lesson := range store.agenda(date) {
-			if strings.EqualFold(lesson.Slot.Subject, subject) {
+			if (subject == "" || strings.EqualFold(lesson.Slot.Subject, subject)) && (class == "" || strings.EqualFold(lesson.Slot.Class, class)) {
 				matches = append(matches, lesson)
 			}
 		}
@@ -726,7 +773,6 @@ func (s *Server) saveLesson(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Could not save lesson", http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("HX-Trigger", "lessonSaved")
 	store.mu.RLock()
 	data := lessonData{
 		Date: date.Format(dateLayout), Lesson: lesson,
@@ -768,7 +814,6 @@ func (s *Server) addLessonNote(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Could not save note", http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("HX-Trigger", "lessonSaved")
 	store.mu.RLock()
 	data := lessonData{
 		Date: date.Format(dateLayout), Lesson: lesson,
@@ -887,6 +932,7 @@ func (s *Server) saveSchedule(w http.ResponseWriter, r *http.Request) {
 
 	store := s.storeFor(r)
 	store.mu.Lock()
+	store.pushHistoryLocked()
 	for _, weekday := range weekdays() {
 		slots := store.data.Schedule[weekday]
 		for index := range slots {
@@ -904,7 +950,6 @@ func (s *Server) saveSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("HX-Trigger", "lessonSaved")
 	data := s.baseData(store, "schedule")
 	store.mu.RLock()
 	data.Schedule = cloneSchedule(store.data.Schedule)
@@ -919,6 +964,7 @@ func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 	}
 	store := s.storeFor(r)
 	store.mu.Lock()
+	store.pushHistoryLocked()
 	store.data.Teacher = strings.TrimSpace(r.FormValue("teacher"))
 	store.data.School = strings.TrimSpace(r.FormValue("school"))
 	store.data.Subjects = splitLines(r.FormValue("subjects"))
@@ -941,6 +987,33 @@ func (s *Server) resetData(w http.ResponseWriter, r *http.Request) {
 	}
 	w.Header().Set("HX-Redirect", "/")
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) undo(w http.ResponseWriter, r *http.Request) {
+	date := r.FormValue("date")
+	if _, err := time.Parse(dateLayout, date); err != nil {
+		date = ""
+	}
+	location := "/"
+	if date != "" {
+		location += "?date=" + date
+		if subject := r.FormValue("subject"); subject != "" {
+			location += "&subject=" + url.QueryEscape(subject)
+		}
+		if class := r.FormValue("class"); class != "" {
+			location += "&class=" + url.QueryEscape(class)
+		}
+	}
+	if err := s.storeFor(r).undo(); err != nil {
+		if strings.Contains(location, "?") {
+			location += "&undo=empty"
+		} else {
+			location += "?undo=empty"
+		}
+		http.Redirect(w, r, location, http.StatusSeeOther)
+		return
+	}
+	http.Redirect(w, r, location, http.StatusSeeOther)
 }
 
 func (s *Server) downloadBackup(w http.ResponseWriter, r *http.Request) {
@@ -981,6 +1054,7 @@ func (s *Server) restoreBackup(w http.ResponseWriter, r *http.Request) {
 
 	store := s.storeFor(r)
 	store.mu.Lock()
+	store.pushHistoryLocked()
 	store.data = restored
 	err = store.persistLocked()
 	store.mu.Unlock()
