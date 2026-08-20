@@ -31,6 +31,7 @@ const sessionCookieName = "lehrerin_session"
 var (
 	ErrUsernameTaken      = errors.New("that username is already taken")
 	ErrInvalidCredentials = errors.New("invalid username or password")
+	ErrInviteCodeRequired = errors.New("invite code is required")
 )
 
 // AccountManager owns the account roster, the signed-session secret, and a
@@ -42,10 +43,14 @@ type AccountManager struct {
 	accounts     []Account
 	sessionKey   []byte
 	stores       map[string]*Store
+	// inviteCode gates signups: if set, it must be supplied to create an
+	// account, so only people who know it (i.e. people you shared it with)
+	// can register.
+	inviteCode string
 }
 
 func newAccountManager(baseDir string) *AccountManager {
-	m := &AccountManager{stores: make(map[string]*Store)}
+	m := &AccountManager{stores: make(map[string]*Store), inviteCode: os.Getenv("SIGNUP_INVITE_CODE")}
 	if baseDir == "" {
 		m.sessionKey = randomBytes(32)
 		return m
@@ -76,14 +81,18 @@ func loadOrCreateSessionKey(path string) []byte {
 	return key
 }
 
-// signUp creates a new account with its own blank planner store.
-func (m *AccountManager) signUp(username, password string) (Account, error) {
+// signUp creates a new account with its own blank planner store. If an
+// invite code is configured, the caller must supply the matching code.
+func (m *AccountManager) signUp(username, password, inviteCode string) (Account, error) {
 	username = strings.TrimSpace(username)
 	if username == "" {
 		return Account{}, errors.New("username is required")
 	}
 	if len(password) < 8 {
 		return Account{}, errors.New("password must be at least 8 characters")
+	}
+	if m.inviteCode != "" && !hmac.Equal([]byte(inviteCode), []byte(m.inviteCode)) {
+		return Account{}, ErrInviteCodeRequired
 	}
 
 	m.mu.Lock()
@@ -249,9 +258,13 @@ func (s *Server) signupSubmit(w http.ResponseWriter, r *http.Request) {
 		s.render(w, "signup", authPageData{View: "signup", Error: "Passwords do not match"})
 		return
 	}
-	account, err := s.accounts.signUp(r.FormValue("username"), r.FormValue("password"))
+	account, err := s.accounts.signUp(r.FormValue("username"), r.FormValue("password"), r.FormValue("invite_code"))
 	if err != nil {
-		s.render(w, "signup", authPageData{View: "signup", Error: err.Error()})
+		message := err.Error()
+		if errors.Is(err, ErrInviteCodeRequired) {
+			message = "Invalid invite code"
+		}
+		s.render(w, "signup", authPageData{View: "signup", Error: message})
 		return
 	}
 	s.accounts.setSessionCookie(w, account.ID)
