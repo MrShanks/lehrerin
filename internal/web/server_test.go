@@ -697,6 +697,25 @@ func TestLoginRateLimiting(t *testing.T) {
 	}
 }
 
+func TestAdminPanelShowsLoginAttemptLog(t *testing.T) {
+	t.Setenv("ADMIN_USERNAMES", "admin-teacher")
+	handler := NewServer()
+	adminCookie := signUpAs(t, handler, "admin-teacher", "password1234")
+	_ = signUpAs(t, handler, "regular-teacher", "password1234")
+
+	postAuthForm(t, handler, "/login", url.Values{"username": {"regular-teacher"}, "password": {"wrong-password"}})
+	postAuthForm(t, handler, "/login", url.Values{"username": {"regular-teacher"}, "password": {"password1234"}})
+
+	adminPage := request(t, handler, http.MethodGet, "/admin", nil, adminCookie)
+	assertContains(t, adminPage, "Recent login attempts")
+	assertContains(t, adminPage, "Failed (wrong username or password)")
+	assertContains(t, adminPage, "Success")
+	assertContains(t, adminPage, "192.0.2.1")
+	if strings.Index(adminPage, "Success") > strings.Index(adminPage, "Failed (wrong username or password)") {
+		t.Fatal("login attempts should be listed newest first")
+	}
+}
+
 func TestAdminPanelAccessAndActions(t *testing.T) {
 	t.Setenv("ADMIN_USERNAMES", "admin-teacher")
 	handler := NewServer()
@@ -734,7 +753,7 @@ func TestAdminPanelAccessAndActions(t *testing.T) {
 
 	requestWithResponse(t, handler, http.MethodPost, "/admin/"+regularID+"/delete", nil, adminCookie)
 	afterDelete := request(t, handler, http.MethodGet, "/admin", nil, adminCookie)
-	if strings.Contains(afterDelete, "regular-teacher") {
+	if strings.Contains(afterDelete, "/admin/"+regularID+"/delete") {
 		t.Fatal("deleted account still listed in the admin panel")
 	}
 	deletedSession := requestWithResponse(t, handler, http.MethodGet, "/", nil, newCookie)

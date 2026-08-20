@@ -53,6 +53,26 @@
         {{end}}
       </tbody>
     </table>
+
+    <h1 class="admin-section-heading">Recent login attempts</h1>
+    <p class="lede">The last 100 attempts to log in, successful or not, with the IP address they came from.</p>
+    <table class="admin-table">
+      <thead>
+        <tr><th>Time</th><th>Username</th><th>IP address</th><th>Result</th></tr>
+      </thead>
+      <tbody>
+        {{range .LoginAttempts}}
+        <tr>
+          <td>{{.Time}}</td>
+          <td>{{.Username}}</td>
+          <td>{{.IP}}</td>
+          <td>{{if .Success}}<span class="status-pill status-online">{{.Result}}</span>{{else}}<span class="status-pill status-fail">{{.Result}}</span>{{end}}</td>
+        </tr>
+        {{else}}
+        <tr><td colspan="4">No login attempts recorded yet.</td></tr>
+        {{end}}
+      </tbody>
+    </table>
   </main>
 </body>
 </html>

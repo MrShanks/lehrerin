@@ -23,11 +23,20 @@ type adminAccountRow struct {
 	IsSelf      bool
 }
 
+type adminLoginAttemptRow struct {
+	Time     string
+	Username string
+	IP       string
+	Success  bool
+	Result   string
+}
+
 type adminPageData struct {
-	View     string
-	Accounts []adminAccountRow
-	Notice   string
-	Error    string
+	View          string
+	Accounts      []adminAccountRow
+	LoginAttempts []adminLoginAttemptRow
+	Notice        string
+	Error         string
 }
 
 // isAdminRequest reports whether the authenticated caller is an admin.
@@ -75,7 +84,30 @@ func (s *Server) renderAdmin(w http.ResponseWriter, r *http.Request, notice, err
 			IsSelf:      account.ID == selfID,
 		}
 	}
-	s.render(w, "admin", adminPageData{View: "admin", Accounts: rows, Notice: notice, Error: errMsg})
+	s.render(w, "admin", adminPageData{View: "admin", Accounts: rows, LoginAttempts: loginAttemptRows(s.accounts.recentLoginAttempts(100)), Notice: notice, Error: errMsg})
+}
+
+func loginAttemptRows(attempts []loginLogEntry) []adminLoginAttemptRow {
+	rows := make([]adminLoginAttemptRow, len(attempts))
+	for i, attempt := range attempts {
+		result := "Success"
+		switch {
+		case attempt.Success:
+			result = "Success"
+		case attempt.Reason == "rate_limited":
+			result = "Blocked (too many attempts)"
+		default:
+			result = "Failed (wrong username or password)"
+		}
+		rows[i] = adminLoginAttemptRow{
+			Time:     attempt.Time.Format("Jan 2, 2006 15:04:05"),
+			Username: attempt.Username,
+			IP:       attempt.IP,
+			Success:  attempt.Success,
+			Result:   result,
+		}
+	}
+	return rows
 }
 
 func formatAdminTime(t time.Time) string {

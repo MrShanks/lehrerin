@@ -31,6 +31,19 @@ const (
 	maxLoginAttemptKeys = 10000
 )
 
+// maxLoginLogEntries caps how many login attempts (successful or not) are
+// kept for the admin panel's audit log.
+const maxLoginLogEntries = 300
+
+// loginLogEntry records a single login attempt for the admin audit log.
+type loginLogEntry struct {
+	Time     time.Time `json:"time"`
+	Username string    `json:"username"`
+	IP       string    `json:"ip"`
+	Success  bool      `json:"success"`
+	Reason   string    `json:"reason,omitempty"`
+}
+
 // Account is a teacher's login identity. Their planner data lives in a
 // separate per-account Store, so every teacher's schedule, agendas, notes,
 // and settings are completely isolated from one another.
@@ -75,6 +88,10 @@ type AccountManager struct {
 	// loginAttempts throttles repeated failed logins; see maxLoginAttempts.
 	attemptsMu    sync.Mutex
 	loginAttempts map[string]*loginAttemptState
+	// loginLog is the persisted audit trail shown in the admin panel.
+	logMu    sync.Mutex
+	logPath  string
+	loginLog []loginLogEntry
 }
 
 type loginAttemptState struct {
@@ -99,6 +116,10 @@ func newAccountManager(baseDir string) *AccountManager {
 	m.usersDir = filepath.Join(baseDir, "users")
 	if contents, err := os.ReadFile(m.accountsPath); err == nil {
 		_ = json.Unmarshal(contents, &m.accounts)
+	}
+	m.logPath = filepath.Join(baseDir, "login_attempts.json")
+	if contents, err := os.ReadFile(m.logPath); err == nil {
+		_ = json.Unmarshal(contents, &m.loginLog)
 	}
 	m.sessionKey = loadOrCreateSessionKey(filepath.Join(baseDir, "session.key"))
 	return m
@@ -254,6 +275,40 @@ func (m *AccountManager) recordLoginSuccess(key string) {
 	m.attemptsMu.Lock()
 	delete(m.loginAttempts, key)
 	m.attemptsMu.Unlock()
+}
+
+// recordLoginAttempt appends an entry to the admin-visible login audit log.
+func (m *AccountManager) recordLoginAttempt(username, ip string, success bool, reason string) {
+	m.logMu.Lock()
+	defer m.logMu.Unlock()
+	m.loginLog = append(m.loginLog, loginLogEntry{Time: time.Now(), Username: username, IP: ip, Success: success, Reason: reason})
+	if len(m.loginLog) > maxLoginLogEntries {
+		m.loginLog = append([]loginLogEntry(nil), m.loginLog[len(m.loginLog)-maxLoginLogEntries:]...)
+	}
+	if m.logPath == "" {
+		return
+	}
+	if err := os.MkdirAll(filepath.Dir(m.logPath), 0o755); err != nil {
+		return
+	}
+	if contents, err := json.MarshalIndent(m.loginLog, "", "  "); err == nil {
+		_ = os.WriteFile(m.logPath, contents, 0o600)
+	}
+}
+
+// recentLoginAttempts returns up to limit entries, newest first.
+func (m *AccountManager) recentLoginAttempts(limit int) []loginLogEntry {
+	m.logMu.Lock()
+	defer m.logMu.Unlock()
+	count := len(m.loginLog)
+	if limit > 0 && limit < count {
+		count = limit
+	}
+	result := make([]loginLogEntry, count)
+	for i := 0; i < count; i++ {
+		result[i] = m.loginLog[len(m.loginLog)-1-i]
+	}
+	return result
 }
 
 func (m *AccountManager) persistAccountsLocked() error {
@@ -514,22 +569,27 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 		s.render(w, "login", authPageData{View: "login", Error: "Invalid input"})
 		return
 	}
-	key := loginRateLimitKey(r, r.FormValue("username"))
+	username := strings.TrimSpace(r.FormValue("username"))
+	ip := clientIP(r)
+	key := loginRateLimitKey(r, username)
 	if wait, allowed := s.accounts.loginAllowed(key); !allowed {
 		minutes := int(wait.Round(time.Minute) / time.Minute)
 		if minutes < 1 {
 			minutes = 1
 		}
+		s.accounts.recordLoginAttempt(username, ip, false, "rate_limited")
 		s.render(w, "login", authPageData{View: "login", Error: fmt.Sprintf("Too many attempts. Try again in %d minute(s).", minutes)})
 		return
 	}
-	account, err := s.accounts.authenticate(r.FormValue("username"), r.FormValue("password"))
+	account, err := s.accounts.authenticate(username, r.FormValue("password"))
 	if err != nil {
 		s.accounts.recordLoginFailure(key)
+		s.accounts.recordLoginAttempt(username, ip, false, "invalid_credentials")
 		s.render(w, "login", authPageData{View: "login", Error: "Invalid username or password"})
 		return
 	}
 	s.accounts.recordLoginSuccess(key)
+	s.accounts.recordLoginAttempt(username, ip, true, "")
 	s.accounts.touchLogin(account.ID)
 	s.accounts.setSessionCookie(w, account.ID, account.SessionVersion)
 	http.Redirect(w, r, "/", http.StatusSeeOther)

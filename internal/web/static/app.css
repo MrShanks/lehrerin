@@ -59,6 +59,8 @@ main { width: min(1180px, calc(100% - 40px)); margin: 0 auto; padding: 58px 0 88
 .status-online { background: var(--green-soft); color: var(--green-dark); }
 .status-offline { background: var(--paper); color: var(--muted); }
 .status-admin { background: var(--yellow); color: var(--ink); }
+.status-fail { background: #fdf3f1; color: var(--coral); }
+.admin-section-heading { margin-top: 44px; }
 .admin-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .admin-inline-form { display: flex; gap: 8px; align-items: center; }
 .admin-inline-form input { min-height: 36px; padding: 0 10px; border: 1px solid var(--line); border-radius: 4px; }
