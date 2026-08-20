@@ -277,7 +277,32 @@ func newServer(dataDir string) http.Handler {
 	mux.HandleFunc("GET /signup", server.signupPage)
 	mux.HandleFunc("POST /signup", server.signupSubmit)
 	mux.Handle("/", server.accounts.requireAuth(protected))
-	return mux
+	return securityHeaders(mux)
+}
+
+// securityHeaders adds baseline hardening headers to every response:
+// no framing (clickjacking), no MIME sniffing, a restrictive CSP scoped to
+// the exact external hosts the app actually loads (fonts, htmx CDN), and
+// HSTS for when the app is served over HTTPS (e.g. behind the Cloudflare
+// Tunnel in production).
+func securityHeaders(next http.Handler) http.Handler {
+	const csp = "default-src 'self'; " +
+		"script-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; " +
+		"style-src 'self' https://fonts.googleapis.com 'unsafe-inline'; " +
+		"font-src https://fonts.gstatic.com; " +
+		"img-src 'self' data:; " +
+		"frame-ancestors 'none'; " +
+		"base-uri 'self'; " +
+		"form-action 'self'"
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		header := w.Header()
+		header.Set("X-Frame-Options", "DENY")
+		header.Set("X-Content-Type-Options", "nosniff")
+		header.Set("Referrer-Policy", "strict-origin-when-cross-origin")
+		header.Set("Content-Security-Policy", csp)
+		header.Set("Strict-Transport-Security", "max-age=63072000; includeSubDomains")
+		next.ServeHTTP(w, r)
+	})
 }
 
 func newStore(path string) *Store {

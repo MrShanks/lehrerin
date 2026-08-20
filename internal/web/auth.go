@@ -8,6 +8,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -17,6 +19,16 @@ import (
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
+)
+
+// Login attempts are throttled per (client IP, username) pair to slow down
+// password guessing without letting an attacker lock a victim out entirely
+// from every network.
+const (
+	maxLoginAttempts    = 5
+	loginAttemptWindow  = 15 * time.Minute
+	loginLockoutFor     = 15 * time.Minute
+	maxLoginAttemptKeys = 10000
 )
 
 // Account is a teacher's login identity. Their planner data lives in a
@@ -60,6 +72,15 @@ type AccountManager struct {
 	// lastSeen tracks recent activity per account ID, in memory only, to
 	// approximate whether someone is currently logged on.
 	lastSeen map[string]time.Time
+	// loginAttempts throttles repeated failed logins; see maxLoginAttempts.
+	attemptsMu    sync.Mutex
+	loginAttempts map[string]*loginAttemptState
+}
+
+type loginAttemptState struct {
+	failures    int
+	windowStart time.Time
+	lockedUntil time.Time
 }
 
 func newAccountManager(baseDir string) *AccountManager {
@@ -68,6 +89,7 @@ func newAccountManager(baseDir string) *AccountManager {
 		inviteCode:     os.Getenv("SIGNUP_INVITE_CODE"),
 		adminUsernames: parseAdminUsernames(os.Getenv("ADMIN_USERNAMES")),
 		lastSeen:       make(map[string]time.Time),
+		loginAttempts:  make(map[string]*loginAttemptState),
 	}
 	if baseDir == "" {
 		m.sessionKey = randomBytes(32)
@@ -169,6 +191,69 @@ func (m *AccountManager) authenticate(username, password string) (Account, error
 	// whether the username exists.
 	bcrypt.CompareHashAndPassword([]byte("$2a$10$invalidinvalidinvalidinvalidinvalidinvalidinvalidinva"), []byte(password))
 	return Account{}, ErrInvalidCredentials
+}
+
+// loginRateLimitKey identifies a client+username pair for throttling.
+func loginRateLimitKey(r *http.Request, username string) string {
+	return clientIP(r) + "|" + strings.ToLower(strings.TrimSpace(username))
+}
+
+// clientIP trusts the X-Real-IP header set by our own nginx reverse proxy,
+// falling back to the raw connection address when running without one.
+func clientIP(r *http.Request) string {
+	if ip := strings.TrimSpace(r.Header.Get("X-Real-IP")); ip != "" {
+		return ip
+	}
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
+}
+
+// loginAllowed reports whether key may attempt another login, and if not,
+// how much longer it is locked out for.
+func (m *AccountManager) loginAllowed(key string) (time.Duration, bool) {
+	m.attemptsMu.Lock()
+	defer m.attemptsMu.Unlock()
+	state, ok := m.loginAttempts[key]
+	if !ok {
+		return 0, true
+	}
+	if now := time.Now(); now.Before(state.lockedUntil) {
+		return state.lockedUntil.Sub(now), false
+	}
+	return 0, true
+}
+
+// recordLoginFailure counts a failed attempt and locks the key out once it
+// crosses maxLoginAttempts within loginAttemptWindow.
+func (m *AccountManager) recordLoginFailure(key string) {
+	m.attemptsMu.Lock()
+	defer m.attemptsMu.Unlock()
+	now := time.Now()
+	if len(m.loginAttempts) >= maxLoginAttemptKeys {
+		for k, state := range m.loginAttempts {
+			if now.Sub(state.windowStart) > loginAttemptWindow && now.After(state.lockedUntil) {
+				delete(m.loginAttempts, k)
+			}
+		}
+	}
+	state, ok := m.loginAttempts[key]
+	if !ok || now.Sub(state.windowStart) > loginAttemptWindow {
+		state = &loginAttemptState{windowStart: now}
+		m.loginAttempts[key] = state
+	}
+	state.failures++
+	if state.failures >= maxLoginAttempts {
+		state.lockedUntil = now.Add(loginLockoutFor)
+	}
+}
+
+// recordLoginSuccess clears any throttling recorded for key.
+func (m *AccountManager) recordLoginSuccess(key string) {
+	m.attemptsMu.Lock()
+	delete(m.loginAttempts, key)
+	m.attemptsMu.Unlock()
 }
 
 func (m *AccountManager) persistAccountsLocked() error {
@@ -339,6 +424,7 @@ func (m *AccountManager) setSessionCookie(w http.ResponseWriter, accountID strin
 		Value:    m.sessionCookieValue(accountID, version),
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   true,
 		SameSite: http.SameSiteLaxMode,
 		MaxAge:   60 * 60 * 24 * 30,
 	})
@@ -428,11 +514,22 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 		s.render(w, "login", authPageData{View: "login", Error: "Invalid input"})
 		return
 	}
+	key := loginRateLimitKey(r, r.FormValue("username"))
+	if wait, allowed := s.accounts.loginAllowed(key); !allowed {
+		minutes := int(wait.Round(time.Minute) / time.Minute)
+		if minutes < 1 {
+			minutes = 1
+		}
+		s.render(w, "login", authPageData{View: "login", Error: fmt.Sprintf("Too many attempts. Try again in %d minute(s).", minutes)})
+		return
+	}
 	account, err := s.accounts.authenticate(r.FormValue("username"), r.FormValue("password"))
 	if err != nil {
+		s.accounts.recordLoginFailure(key)
 		s.render(w, "login", authPageData{View: "login", Error: "Invalid username or password"})
 		return
 	}
+	s.accounts.recordLoginSuccess(key)
 	s.accounts.touchLogin(account.ID)
 	s.accounts.setSessionCookie(w, account.ID, account.SessionVersion)
 	http.Redirect(w, r, "/", http.StatusSeeOther)

@@ -57,7 +57,7 @@ func TestYearAndTimetableViews(t *testing.T) {
 
 func TestAgendaSubjectFilterShowsWholeWeek(t *testing.T) {
 	handler := NewServer()
-	server := handler.(*http.ServeMux)
+	server := handler
 	cookie := signUp(t, handler)
 
 	form := url.Values{}
@@ -99,7 +99,7 @@ func TestAgendaSubjectFilterShowsWholeWeek(t *testing.T) {
 
 func TestDayAndWeekOverride(t *testing.T) {
 	handler := NewServer()
-	server := handler.(*http.ServeMux)
+	server := handler
 	cookie := signUp(t, handler)
 
 	dashboard := request(t, server, http.MethodGet, "/?date=2026-08-12", nil, cookie)
@@ -149,7 +149,7 @@ func TestDayAndWeekOverride(t *testing.T) {
 
 func TestDayOverrideActivities(t *testing.T) {
 	handler := NewServer()
-	server := handler.(*http.ServeMux)
+	server := handler
 	cookie := signUp(t, handler)
 
 	request(t, server, http.MethodPost, "/agenda/2026-08-12/override", url.Values{
@@ -170,7 +170,7 @@ func TestDayOverrideActivities(t *testing.T) {
 
 func TestEditDayOverride(t *testing.T) {
 	handler := NewServer()
-	server := handler.(*http.ServeMux)
+	server := handler
 	cookie := signUp(t, handler)
 
 	request(t, server, http.MethodPost, "/agenda/2026-08-12/override", url.Values{
@@ -194,7 +194,7 @@ func TestEditDayOverride(t *testing.T) {
 
 func TestEditEventWithoutActivities(t *testing.T) {
 	handler := NewServer()
-	server := handler.(*http.ServeMux)
+	server := handler
 	cookie := signUp(t, handler)
 
 	request(t, server, http.MethodPost, "/agenda/2026-08-12/override",
@@ -210,7 +210,7 @@ func TestEditEventWithoutActivities(t *testing.T) {
 
 func TestLessonNotesShowUpInLog(t *testing.T) {
 	handler := NewServer()
-	server := handler.(*http.ServeMux)
+	server := handler
 	cookie := signUp(t, handler)
 
 	saved := request(t, server, http.MethodPost, "/agenda/2026-08-12/lessons/1/notes",
@@ -236,7 +236,7 @@ func TestLessonNotesShowUpInLog(t *testing.T) {
 
 func TestNotesCanBeTaggedAndFilteredByStudent(t *testing.T) {
 	handler := NewServer()
-	server := handler.(*http.ServeMux)
+	server := handler
 	cookie := signUp(t, handler)
 
 	request(t, server, http.MethodPost, "/agenda/2026-08-12/lessons/1/notes",
@@ -291,7 +291,7 @@ func TestResetDataWipesEverything(t *testing.T) {
 
 func TestReviewShowsLessonsBySubjectAndClass(t *testing.T) {
 	handler := NewServer()
-	server := handler.(*http.ServeMux)
+	server := handler
 	cookie := signUp(t, handler)
 
 	request(t, server, http.MethodPost, "/agenda/2026-08-12/lessons/1",
@@ -325,7 +325,7 @@ func TestReviewShowsLessonsBySubjectAndClass(t *testing.T) {
 
 func TestReviewIncludesTemplateOnlyLessons(t *testing.T) {
 	handler := NewServer()
-	server := handler.(*http.ServeMux)
+	server := handler
 	cookie := signUp(t, handler)
 
 	// Setting up the weekly timetable alone (never opening any specific day's
@@ -342,7 +342,7 @@ func TestReviewIncludesTemplateOnlyLessons(t *testing.T) {
 
 func TestReviewExpandsLessonInline(t *testing.T) {
 	handler := NewServer()
-	server := handler.(*http.ServeMux)
+	server := handler
 	cookie := signUp(t, handler)
 
 	request(t, server, http.MethodPost, "/agenda/2026-08-12/lessons/1",
@@ -363,7 +363,7 @@ func TestReviewExpandsLessonInline(t *testing.T) {
 
 func TestReviewReadyOnlyFilter(t *testing.T) {
 	handler := NewServer()
-	server := handler.(*http.ServeMux)
+	server := handler
 	cookie := signUp(t, handler)
 
 	request(t, server, http.MethodPost, "/agenda/2026-08-12/lessons/1",
@@ -622,7 +622,7 @@ func TestDownloadWeekUsesSelectedDateAndCurrentAccount(t *testing.T) {
 func TestUndoRestoresPreviousLessonAndCapsAt100Entries(t *testing.T) {
 	handler := NewServer()
 	cookie := signUp(t, handler)
-	server := handler.(*http.ServeMux)
+	server := handler
 
 	for index := 0; index < 101; index++ {
 		request(t, server, http.MethodPost, "/agenda/2026-08-12/lessons/1", url.Values{
@@ -666,6 +666,35 @@ func TestUndoHistoryIsIsolatedPerAccount(t *testing.T) {
 	}
 	bodyB := request(t, handler, http.MethodGet, "/?date=2026-08-12", nil, accountB)
 	assertContains(t, bodyB, "B lesson")
+}
+
+func TestLoginRateLimiting(t *testing.T) {
+	handler := NewServer()
+	_ = signUpAs(t, handler, "rate-limited", "password1234")
+
+	failLogin := func() *httptest.ResponseRecorder {
+		return postAuthForm(t, handler, "/login", url.Values{"username": {"rate-limited"}, "password": {"wrong-password"}})
+	}
+
+	for i := 0; i < maxLoginAttempts-1; i++ {
+		resp := failLogin()
+		if strings.Contains(resp.Body.String(), "Too many attempts") {
+			t.Fatalf("locked out after only %d attempts, want %d", i+1, maxLoginAttempts)
+		}
+	}
+
+	// One more failure crosses the threshold and should lock the account out,
+	// even with the correct password.
+	failLogin()
+	locked := postAuthForm(t, handler, "/login", url.Values{"username": {"rate-limited"}, "password": {"password1234"}})
+	assertContains(t, locked.Body.String(), "Too many attempts")
+
+	// A different username from the same client should be unaffected.
+	_ = signUpAs(t, handler, "another-teacher", "password1234")
+	other := postAuthForm(t, handler, "/login", url.Values{"username": {"another-teacher"}, "password": {"password1234"}})
+	if other.Code != http.StatusSeeOther {
+		t.Fatalf("unrelated account was rate limited: %d", other.Code)
+	}
 }
 
 func TestAdminPanelAccessAndActions(t *testing.T) {
