@@ -1,0 +1,59 @@
+{{define "admin"}}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Admin · Lehrerin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&amp;display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/" aria-label="Lehrerin home"><span class="brand-mark">L</span><span>lehrerin</span></a>
+    <nav aria-label="Main navigation">
+      <a href="/">Agenda</a>
+      <a href="/admin" aria-current="page">Admin</a>
+    </nav>
+    <div class="teacher">
+      <form action="/logout" method="post"><button class="icon-link logout-button" type="submit" aria-label="Log out" title="Log out">&#x23FB;</button></form>
+    </div>
+  </header>
+  <main class="admin-shell">
+    <h1>Teacher accounts</h1>
+    <p class="lede">Everyone who has signed up with your invite code. Delete accounts you don't recognize, or reset a password.</p>
+    {{if .Notice}}<p class="admin-notice">{{.Notice}}</p>{{end}}
+    {{if .Error}}<p class="auth-error">{{.Error}}</p>{{end}}
+    <table class="admin-table">
+      <thead>
+        <tr><th>Username</th><th>Status</th><th>Created</th><th>Last login</th><th>Actions</th></tr>
+      </thead>
+      <tbody>
+        {{range .Accounts}}
+        <tr>
+          <td>{{.Username}}{{if .IsAdmin}} <span class="status-pill status-admin">admin</span>{{end}}{{if .IsSelf}} <span class="status-pill">you</span>{{end}}</td>
+          <td>{{if .Online}}<span class="status-pill status-online">online now</span>{{else}}<span class="status-pill status-offline">offline</span>{{end}}</td>
+          <td>{{.CreatedAt}}</td>
+          <td>{{.LastLoginAt}}</td>
+          <td class="admin-actions">
+            <form method="post" action="/admin/{{.ID}}/reset-password" class="admin-inline-form">
+              <input type="password" name="new_password" placeholder="New password (optional)" minlength="8">
+              <button class="secondary" type="submit">Reset password</button>
+            </form>
+            {{if not .IsSelf}}
+            <form method="post" action="/admin/{{.ID}}/delete" onsubmit="return confirm('Delete {{.Username}}? This permanently removes their account and planner data.');">
+              <button class="danger" type="submit">Delete</button>
+            </form>
+            {{end}}
+          </td>
+        </tr>
+        {{end}}
+      </tbody>
+    </table>
+  </main>
+</body>
+</html>
+{{end}}

@@ -11,8 +11,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 )
@@ -21,9 +23,14 @@ import (
 // separate per-account Store, so every teacher's schedule, agendas, notes,
 // and settings are completely isolated from one another.
 type Account struct {
-	ID           string `json:"id"`
-	Username     string `json:"username"`
-	PasswordHash string `json:"passwordHash"`
+	ID           string    `json:"id"`
+	Username     string    `json:"username"`
+	PasswordHash string    `json:"passwordHash"`
+	CreatedAt    time.Time `json:"createdAt,omitempty"`
+	LastLoginAt  time.Time `json:"lastLoginAt,omitempty"`
+	// SessionVersion is embedded in session cookies; bumping it (e.g. on an
+	// admin password reset) invalidates every session already issued.
+	SessionVersion int `json:"sessionVersion"`
 }
 
 const sessionCookieName = "lehrerin_session"
@@ -47,10 +54,21 @@ type AccountManager struct {
 	// account, so only people who know it (i.e. people you shared it with)
 	// can register.
 	inviteCode string
+	// adminUsernames lists the (lowercased) usernames allowed into /admin,
+	// configured via the ADMIN_USERNAMES env var.
+	adminUsernames map[string]bool
+	// lastSeen tracks recent activity per account ID, in memory only, to
+	// approximate whether someone is currently logged on.
+	lastSeen map[string]time.Time
 }
 
 func newAccountManager(baseDir string) *AccountManager {
-	m := &AccountManager{stores: make(map[string]*Store), inviteCode: os.Getenv("SIGNUP_INVITE_CODE")}
+	m := &AccountManager{
+		stores:         make(map[string]*Store),
+		inviteCode:     os.Getenv("SIGNUP_INVITE_CODE"),
+		adminUsernames: parseAdminUsernames(os.Getenv("ADMIN_USERNAMES")),
+		lastSeen:       make(map[string]time.Time),
+	}
 	if baseDir == "" {
 		m.sessionKey = randomBytes(32)
 		return m
@@ -62,6 +80,16 @@ func newAccountManager(baseDir string) *AccountManager {
 	}
 	m.sessionKey = loadOrCreateSessionKey(filepath.Join(baseDir, "session.key"))
 	return m
+}
+
+func parseAdminUsernames(raw string) map[string]bool {
+	admins := make(map[string]bool)
+	for _, name := range strings.Split(raw, ",") {
+		if name = strings.ToLower(strings.TrimSpace(name)); name != "" {
+			admins[name] = true
+		}
+	}
+	return admins
 }
 
 func randomBytes(n int) []byte {
@@ -107,7 +135,7 @@ func (m *AccountManager) signUp(username, password, inviteCode string) (Account,
 		m.mu.Unlock()
 		return Account{}, err
 	}
-	account := Account{ID: hex.EncodeToString(randomBytes(8)), Username: username, PasswordHash: string(hash)}
+	account := Account{ID: hex.EncodeToString(randomBytes(8)), Username: username, PasswordHash: string(hash), CreatedAt: time.Now()}
 	m.accounts = append(m.accounts, account)
 	err = m.persistAccountsLocked()
 	m.mu.Unlock()
@@ -157,6 +185,108 @@ func (m *AccountManager) persistAccountsLocked() error {
 	return os.WriteFile(m.accountsPath, contents, 0o600)
 }
 
+// accountByID returns a copy of the account with the given ID.
+func (m *AccountManager) accountByID(id string) (Account, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	for _, account := range m.accounts {
+		if account.ID == id {
+			return account, true
+		}
+	}
+	return Account{}, false
+}
+
+// listAccounts returns a copy of every registered account.
+func (m *AccountManager) listAccounts() []Account {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return append([]Account(nil), m.accounts...)
+}
+
+// isAdminUsername reports whether username is listed in ADMIN_USERNAMES.
+func (m *AccountManager) isAdminUsername(username string) bool {
+	return m.adminUsernames[strings.ToLower(strings.TrimSpace(username))]
+}
+
+// touchLogin records that an account just logged in successfully.
+func (m *AccountManager) touchLogin(id string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.accounts {
+		if m.accounts[i].ID == id {
+			m.accounts[i].LastLoginAt = time.Now()
+			_ = m.persistAccountsLocked()
+			return
+		}
+	}
+}
+
+// touchSeen records recent activity for the "currently logged on" indicator.
+func (m *AccountManager) touchSeen(id string) {
+	m.mu.Lock()
+	m.lastSeen[id] = time.Now()
+	m.mu.Unlock()
+}
+
+func (m *AccountManager) lastSeenAt(id string) (time.Time, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	seen, ok := m.lastSeen[id]
+	return seen, ok
+}
+
+// deleteAccount removes an account, its planner data, and its cached store.
+func (m *AccountManager) deleteAccount(id string) error {
+	m.mu.Lock()
+	index := -1
+	for i, account := range m.accounts {
+		if account.ID == id {
+			index = i
+			break
+		}
+	}
+	if index == -1 {
+		m.mu.Unlock()
+		return errors.New("account not found")
+	}
+	m.accounts = append(m.accounts[:index:index], m.accounts[index+1:]...)
+	err := m.persistAccountsLocked()
+	delete(m.stores, id)
+	delete(m.lastSeen, id)
+	usersDir := m.usersDir
+	m.mu.Unlock()
+	if err != nil {
+		return err
+	}
+	if usersDir != "" {
+		_ = os.Remove(filepath.Join(usersDir, id+".json"))
+	}
+	return nil
+}
+
+// resetPassword sets a new password for an account and bumps its session
+// version, which signs that account out of every device immediately.
+func (m *AccountManager) resetPassword(id, newPassword string) error {
+	if len(newPassword) < 8 {
+		return errors.New("password must be at least 8 characters")
+	}
+	hash, err := bcrypt.GenerateFromPassword([]byte(newPassword), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.accounts {
+		if m.accounts[i].ID == id {
+			m.accounts[i].PasswordHash = string(hash)
+			m.accounts[i].SessionVersion++
+			return m.persistAccountsLocked()
+		}
+	}
+	return errors.New("account not found")
+}
+
 // storeFor returns (creating and caching if necessary) the Store that holds
 // one account's planner data, completely separate from every other account.
 func (m *AccountManager) storeFor(accountID string) *Store {
@@ -174,30 +304,39 @@ func (m *AccountManager) storeFor(accountID string) *Store {
 	return store
 }
 
-func (m *AccountManager) sessionCookieValue(accountID string) string {
+func (m *AccountManager) sessionCookieValue(accountID string, version int) string {
+	payload := accountID + ":" + strconv.Itoa(version)
 	mac := hmac.New(sha256.New, m.sessionKey)
-	mac.Write([]byte(accountID))
-	return accountID + "." + hex.EncodeToString(mac.Sum(nil))
+	mac.Write([]byte(payload))
+	return payload + "." + hex.EncodeToString(mac.Sum(nil))
 }
 
-func (m *AccountManager) verifySessionCookie(value string) (string, bool) {
-	accountID, signature, found := strings.Cut(value, ".")
+func (m *AccountManager) verifySessionCookie(value string) (accountID string, version int, ok bool) {
+	payload, signature, found := strings.Cut(value, ".")
 	if !found {
-		return "", false
+		return "", 0, false
+	}
+	accountID, versionRaw, found := strings.Cut(payload, ":")
+	if !found {
+		return "", 0, false
+	}
+	version, err := strconv.Atoi(versionRaw)
+	if err != nil {
+		return "", 0, false
 	}
 	mac := hmac.New(sha256.New, m.sessionKey)
-	mac.Write([]byte(accountID))
+	mac.Write([]byte(payload))
 	expected := hex.EncodeToString(mac.Sum(nil))
 	if !hmac.Equal([]byte(signature), []byte(expected)) {
-		return "", false
+		return "", 0, false
 	}
-	return accountID, true
+	return accountID, version, true
 }
 
-func (m *AccountManager) setSessionCookie(w http.ResponseWriter, accountID string) {
+func (m *AccountManager) setSessionCookie(w http.ResponseWriter, accountID string, version int) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
-		Value:    m.sessionCookieValue(accountID),
+		Value:    m.sessionCookieValue(accountID, version),
 		Path:     "/",
 		HttpOnly: true,
 		SameSite: http.SameSiteLaxMode,
@@ -218,11 +357,20 @@ func (m *AccountManager) requireAuth(next http.Handler) http.Handler {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
-		accountID, ok := m.verifySessionCookie(cookie.Value)
+		accountID, version, ok := m.verifySessionCookie(cookie.Value)
 		if !ok {
+			clearSessionCookie(w)
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
+		account, found := m.accountByID(accountID)
+		if !found || account.SessionVersion != version {
+			// Account deleted or password was reset elsewhere: force re-login.
+			clearSessionCookie(w)
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		m.touchSeen(accountID)
 		next.ServeHTTP(w, withAccountID(r, accountID))
 	})
 }
@@ -267,7 +415,7 @@ func (s *Server) signupSubmit(w http.ResponseWriter, r *http.Request) {
 		s.render(w, "signup", authPageData{View: "signup", Error: message})
 		return
 	}
-	s.accounts.setSessionCookie(w, account.ID)
+	s.accounts.setSessionCookie(w, account.ID, account.SessionVersion)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
@@ -285,7 +433,8 @@ func (s *Server) loginSubmit(w http.ResponseWriter, r *http.Request) {
 		s.render(w, "login", authPageData{View: "login", Error: "Invalid username or password"})
 		return
 	}
-	s.accounts.setSessionCookie(w, account.ID)
+	s.accounts.touchLogin(account.ID)
+	s.accounts.setSessionCookie(w, account.ID, account.SessionVersion)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 

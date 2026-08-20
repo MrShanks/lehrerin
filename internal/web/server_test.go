@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"testing"
@@ -665,6 +666,79 @@ func TestUndoHistoryIsIsolatedPerAccount(t *testing.T) {
 	}
 	bodyB := request(t, handler, http.MethodGet, "/?date=2026-08-12", nil, accountB)
 	assertContains(t, bodyB, "B lesson")
+}
+
+func TestAdminPanelAccessAndActions(t *testing.T) {
+	t.Setenv("ADMIN_USERNAMES", "admin-teacher")
+	handler := NewServer()
+	adminCookie := signUpAs(t, handler, "admin-teacher", "password1234")
+	regularCookie := signUpAs(t, handler, "regular-teacher", "password1234")
+
+	forbidden := requestWithResponse(t, handler, http.MethodGet, "/admin", nil, regularCookie)
+	if forbidden.Code != http.StatusNotFound {
+		t.Fatalf("non-admin GET /admin returned %d, want 404", forbidden.Code)
+	}
+
+	adminPage := request(t, handler, http.MethodGet, "/admin", nil, adminCookie)
+	assertContains(t, adminPage, "regular-teacher")
+	assertContains(t, adminPage, "admin-teacher")
+
+	match := regexp.MustCompile(`/admin/([0-9a-f]+)/delete`).FindStringSubmatch(adminPage)
+	if match == nil {
+		t.Fatal("admin page did not expose a delete action for the regular account")
+	}
+	regularID := match[1]
+
+	// Resetting the password should sign the account out everywhere.
+	requestWithResponse(t, handler, http.MethodPost, "/admin/"+regularID+"/reset-password",
+		url.Values{"new_password": {"brandnewpass1"}}, adminCookie)
+	loggedOut := requestWithResponse(t, handler, http.MethodGet, "/", nil, regularCookie)
+	if loggedOut.Code != http.StatusSeeOther || loggedOut.Header().Get("Location") != "/login" {
+		t.Fatalf("account with reset password should be signed out, got %d", loggedOut.Code)
+	}
+
+	newCookie := loginAs(t, handler, "regular-teacher", "brandnewpass1")
+
+	// An admin cannot delete their own account from the panel.
+	selfDelete := requestWithResponse(t, handler, http.MethodPost, "/admin/"+adminID(t, adminCookie)+"/delete", nil, adminCookie)
+	assertContains(t, selfDelete.Body.String(), "You cannot delete your own account")
+
+	requestWithResponse(t, handler, http.MethodPost, "/admin/"+regularID+"/delete", nil, adminCookie)
+	afterDelete := request(t, handler, http.MethodGet, "/admin", nil, adminCookie)
+	if strings.Contains(afterDelete, "regular-teacher") {
+		t.Fatal("deleted account still listed in the admin panel")
+	}
+	deletedSession := requestWithResponse(t, handler, http.MethodGet, "/", nil, newCookie)
+	if deletedSession.Code != http.StatusSeeOther || deletedSession.Header().Get("Location") != "/login" {
+		t.Fatalf("deleted account should be signed out, got %d", deletedSession.Code)
+	}
+}
+
+func loginAs(t *testing.T, handler http.Handler, username, password string) string {
+	t.Helper()
+	resp := postAuthForm(t, handler, "/login", url.Values{"username": {username}, "password": {password}})
+	if resp.Code != http.StatusSeeOther {
+		t.Fatalf("login for %q returned %d: %.300s", username, resp.Code, resp.Body.String())
+	}
+	for _, cookie := range resp.Result().Cookies() {
+		if cookie.Name == sessionCookieName {
+			return cookie.Name + "=" + cookie.Value
+		}
+	}
+	t.Fatalf("login for %q did not set a session cookie", username)
+	return ""
+}
+
+// adminID extracts the account ID embedded in a session cookie value.
+func adminID(t *testing.T, cookie string) string {
+	t.Helper()
+	value := strings.TrimPrefix(cookie, sessionCookieName+"=")
+	payload, _, _ := strings.Cut(value, ".")
+	id, _, _ := strings.Cut(payload, ":")
+	if id == "" {
+		t.Fatalf("could not extract account id from cookie %q", cookie)
+	}
+	return id
 }
 
 func assertUndoRedirect(t *testing.T, handler http.Handler, cookie string) {

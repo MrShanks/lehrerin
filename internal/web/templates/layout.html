@@ -21,6 +21,7 @@
       <a href="/schedule" {{if eq .View "schedule"}}aria-current="page"{{end}}>Timetable</a>
       <a href="/notes" {{if eq .View "notes"}}aria-current="page"{{end}}>Notes</a>
       <a href="/review" {{if eq .View "review"}}aria-current="page"{{end}}>Review</a>
+      {{if .IsAdmin}}<a href="/admin" {{if eq .View "admin"}}aria-current="page"{{end}}>Admin</a>{{end}}
     </nav>
     <div class="teacher">
       <span class="teacher-copy"><strong>{{.Teacher}}</strong><small>{{.School}}</small></span>

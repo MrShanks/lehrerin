@@ -123,6 +123,7 @@ type subjectDay struct {
 
 type pageData struct {
 	View            string
+	IsAdmin         bool
 	Teacher         string
 	School          string
 	Date            string
@@ -265,6 +266,9 @@ func newServer(dataDir string) http.Handler {
 	protected.HandleFunc("GET /backup", server.downloadBackup)
 	protected.HandleFunc("POST /restore", server.restoreBackup)
 	protected.HandleFunc("POST /logout", server.logout)
+	protected.HandleFunc("GET /admin", server.requireAdmin(server.adminPage))
+	protected.HandleFunc("POST /admin/{id}/delete", server.requireAdmin(server.adminDeleteAccount))
+	protected.HandleFunc("POST /admin/{id}/reset-password", server.requireAdmin(server.adminResetPassword))
 
 	mux := http.NewServeMux()
 	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(static))))
@@ -621,14 +625,14 @@ func (s *Store) persistLocked() error {
 func (s *Server) agenda(w http.ResponseWriter, r *http.Request) {
 	date := requestedDate(r.URL.Query().Get("date"))
 	store := s.storeFor(r)
-	data := s.agendaData(store, date, strings.TrimSpace(r.URL.Query().Get("subject")), strings.TrimSpace(r.URL.Query().Get("class")))
+	data := s.agendaData(store, r, date, strings.TrimSpace(r.URL.Query().Get("subject")), strings.TrimSpace(r.URL.Query().Get("class")))
 	data.UndoEmpty = r.URL.Query().Get("undo") == "empty"
 	s.render(w, "layout", data)
 }
 
 func (s *Server) year(w http.ResponseWriter, r *http.Request) {
 	store := s.storeFor(r)
-	data := s.baseData(store, "year")
+	data := s.baseData(store, r, "year")
 	store.mu.RLock()
 	eventCounts := make(map[string]int, len(store.data.DayOverrides))
 	for key, overrides := range store.data.DayOverrides {
@@ -641,7 +645,7 @@ func (s *Server) year(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) notes(w http.ResponseWriter, r *http.Request) {
 	store := s.storeFor(r)
-	data := s.baseData(store, "notes")
+	data := s.baseData(store, r, "notes")
 	data.NoteStudent = strings.TrimSpace(r.URL.Query().Get("student"))
 	data.NoteStudents = store.noteStudents()
 	data.Notes = store.allNotes(data.NoteStudent)
@@ -650,7 +654,7 @@ func (s *Server) notes(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) review(w http.ResponseWriter, r *http.Request) {
 	store := s.storeFor(r)
-	data := s.baseData(store, "review")
+	data := s.baseData(store, r, "review")
 	data.ReviewSubject = strings.TrimSpace(r.URL.Query().Get("subject"))
 	data.ReviewClass = strings.TrimSpace(r.URL.Query().Get("class"))
 	if r.URL.Query().Has("ready") {
@@ -667,15 +671,15 @@ func (s *Server) review(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) schedule(w http.ResponseWriter, r *http.Request) {
 	store := s.storeFor(r)
-	data := s.baseData(store, "schedule")
+	data := s.baseData(store, r, "schedule")
 	store.mu.RLock()
 	data.Schedule = cloneSchedule(store.data.Schedule)
 	store.mu.RUnlock()
 	s.render(w, "layout", data)
 }
 
-func (s *Server) agendaData(store *Store, date time.Time, subject, class string) pageData {
-	data := s.baseData(store, "agenda")
+func (s *Server) agendaData(store *Store, r *http.Request, date time.Time, subject, class string) pageData {
+	data := s.baseData(store, r, "agenda")
 	data.Date = date.Format("Monday, January 2, 2006")
 	data.DateInput = date.Format(dateLayout)
 	data.PrevDate = date.AddDate(0, 0, -7).Format(dateLayout)
@@ -728,11 +732,11 @@ func (s *Server) subjectWeek(store *Store, selected time.Time, subject, class st
 	return days, total
 }
 
-func (s *Server) baseData(store *Store, view string) pageData {
+func (s *Server) baseData(store *Store, r *http.Request, view string) pageData {
 	store.mu.RLock()
 	defer store.mu.RUnlock()
 	return pageData{
-		View: view, Teacher: store.data.Teacher, School: store.data.School,
+		View: view, IsAdmin: s.isAdminRequest(r), Teacher: store.data.Teacher, School: store.data.School,
 		Subjects: append([]string(nil), store.data.Subjects...), Classes: append([]string(nil), store.data.Classes...),
 		Students: append([]string(nil), store.data.Students...),
 		Weekdays: weekdays(), SchoolYear: "2026/2027", YearStart: "August 10, 2026", YearEnd: "July 2, 2027",
@@ -950,7 +954,7 @@ func (s *Server) saveSchedule(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data := s.baseData(store, "schedule")
+	data := s.baseData(store, r, "schedule")
 	store.mu.RLock()
 	data.Schedule = cloneSchedule(store.data.Schedule)
 	store.mu.RUnlock()
