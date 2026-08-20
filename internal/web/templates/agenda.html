@@ -180,6 +180,51 @@
     });
   })();
 </script>
+<script>
+  // Jump to and open a specific lesson when linked as /?date=...#lesson-N
+  // (e.g. from the Notes or Review tabs), since <details> hides its content
+  // and a plain anchor jump alone wouldn't reveal or highlight it.
+  (function () {
+    const target = window.location.hash && document.querySelector(window.location.hash);
+    if (!target || !target.matches('details.lesson-card')) return;
+    target.open = true;
+    target.classList.add('highlight');
+    target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    setTimeout(function () { target.classList.remove('highlight'); }, 2500);
+  })();
+</script>
+<script>
+  // Notes are edited in place: clicking the text puts the cursor there.
+  // Only Enter/Escape do anything here, deliberately bypassing htmx triggers
+  // so nothing else (e.g. autosave on other fields) can interfere with a
+  // note mid-edit. Delegated so it keeps working after the card is replaced.
+  document.addEventListener('keydown', function (event) {
+    const input = event.target.closest('.lesson-note-text');
+    if (!input) return;
+    if (event.key === 'Escape') {
+      input.value = input.dataset.originalValue;
+      input.blur();
+      return;
+    }
+    if (event.key !== 'Enter') return;
+    event.preventDefault();
+    const li = input.closest('.lesson-note');
+    const student = li.querySelector('input[name="student"]');
+    const body = new URLSearchParams({ text: input.value, student: student ? student.value : '' });
+    fetch(input.dataset.editUrl, {
+      method: 'POST', body: body,
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    }).then(function (response) {
+      return response.text();
+    }).then(function (html) {
+      const card = document.getElementById(input.dataset.lessonId);
+      if (!card) return;
+      card.outerHTML = html;
+      const replaced = document.getElementById(input.dataset.lessonId);
+      if (replaced) replaced.open = true;
+    });
+  });
+</script>
 {{end}}
 
 {{define "lesson-card"}}
@@ -208,7 +253,16 @@
     <p class="lesson-notes-heading">Notes</p>
     {{if .Lesson.Notes}}
     <ul class="lesson-notes-list">
-      {{range .Lesson.Notes}}<li><span>{{.Time}}</span>{{if .Student}}<strong>{{.Student}}</strong>{{end}}{{.Text}}</li>{{end}}
+      {{$date := .Date}}{{$slotNumber := .Lesson.Slot.Number}}
+      {{range $index, $note := .Lesson.Notes}}
+      <li class="lesson-note">
+        <span class="lesson-note-time">{{$note.Time}}</span>{{if $note.Student}}<strong class="lesson-note-student">{{$note.Student}}</strong>{{end}}
+        <input type="hidden" name="student" value="{{$note.Student}}">
+        <input
+          class="lesson-note-text" type="text" name="text" value="{{$note.Text}}" data-original-value="{{$note.Text}}"
+          data-edit-url="/agenda/{{$date}}/lessons/{{$slotNumber}}/notes/{{$index}}/edit" data-lesson-id="lesson-{{$slotNumber}}">
+      </li>
+      {{end}}
     </ul>
     {{end}}
     <form class="lesson-notes-form" hx-post="/agenda/{{.Date}}/lessons/{{.Lesson.Slot.Number}}/notes" hx-target="#lesson-{{.Lesson.Slot.Number}}" hx-swap="outerHTML">

@@ -256,6 +256,7 @@ func newServer(dataDir string) http.Handler {
 	protected.HandleFunc("GET /download/week", server.downloadWeek)
 	protected.HandleFunc("POST /agenda/{date}/lessons/{slot}", server.saveLesson)
 	protected.HandleFunc("POST /agenda/{date}/lessons/{slot}/notes", server.addLessonNote)
+	protected.HandleFunc("POST /agenda/{date}/lessons/{slot}/notes/{index}/edit", server.updateLessonNote)
 	protected.HandleFunc("POST /agenda/{date}/override", server.saveDayOverride)
 	protected.HandleFunc("POST /agenda/{date}/override/{index}/edit", server.updateDayOverride)
 	protected.HandleFunc("POST /agenda/{date}/override/{index}/clear", server.clearDayOverride)
@@ -839,6 +840,57 @@ func (s *Server) addLessonNote(w http.ResponseWriter, r *http.Request) {
 	lessons := store.agenda(date)
 	lesson := lessons[slotIndex]
 	lesson.Notes = append(lesson.Notes, LessonNote{Time: time.Now().Format("15:04"), Text: text, Student: student})
+	if err := store.saveLessonOverride(date, slotIndex, lesson); err != nil {
+		http.Error(w, "Could not save note", http.StatusInternalServerError)
+		return
+	}
+	store.mu.RLock()
+	data := lessonData{
+		Date: date.Format(dateLayout), Lesson: lesson,
+		Subjects: append([]string(nil), store.data.Subjects...),
+		Classes:  append([]string(nil), store.data.Classes...),
+		Students: append([]string(nil), store.data.Students...),
+	}
+	store.mu.RUnlock()
+	s.render(w, "lesson-card", data)
+}
+
+func (s *Server) updateLessonNote(w http.ResponseWriter, r *http.Request) {
+	date, err := time.Parse(dateLayout, r.PathValue("date"))
+	if err != nil || date.Weekday() == time.Saturday || date.Weekday() == time.Sunday {
+		http.Error(w, "Invalid school date", http.StatusBadRequest)
+		return
+	}
+	slotIndex, err := pathIndex(r.PathValue("slot"), len(lessonTimes))
+	if err != nil {
+		http.Error(w, "Invalid lesson", http.StatusBadRequest)
+		return
+	}
+	noteIndex, err := strconv.Atoi(r.PathValue("index"))
+	if err != nil || noteIndex < 0 {
+		http.Error(w, "Invalid note", http.StatusBadRequest)
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "Invalid input", http.StatusBadRequest)
+		return
+	}
+	text := strings.TrimSpace(r.FormValue("text"))
+	if text == "" {
+		http.Error(w, "Note text is required", http.StatusBadRequest)
+		return
+	}
+	student := strings.TrimSpace(r.FormValue("student"))
+
+	store := s.storeFor(r)
+	lessons := store.agenda(date)
+	lesson := lessons[slotIndex]
+	if noteIndex >= len(lesson.Notes) {
+		http.Error(w, "Note not found", http.StatusBadRequest)
+		return
+	}
+	lesson.Notes[noteIndex].Text = text
+	lesson.Notes[noteIndex].Student = student
 	if err := store.saveLessonOverride(date, slotIndex, lesson); err != nil {
 		http.Error(w, "Could not save note", http.StatusInternalServerError)
 		return

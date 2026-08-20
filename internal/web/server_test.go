@@ -234,6 +234,31 @@ func TestLessonNotesShowUpInLog(t *testing.T) {
 	}
 }
 
+func TestLessonNoteCanBeEdited(t *testing.T) {
+	handler := NewServer()
+	cookie := signUp(t, handler)
+
+	request(t, handler, http.MethodPost, "/agenda/2026-08-12/lessons/1/notes",
+		url.Values{"text": {"Fire alarm interrupted the lesson"}}, cookie)
+
+	edited := request(t, handler, http.MethodPost, "/agenda/2026-08-12/lessons/1/notes/0/edit",
+		url.Values{"text": {"Fire drill, not a real alarm"}, "student": {"Alex Doe"}}, cookie)
+	assertContains(t, edited, "Fire drill, not a real alarm")
+	assertContains(t, edited, "Alex Doe")
+	if strings.Contains(edited, "Fire alarm interrupted the lesson") {
+		t.Fatal("editing a note should replace its text, not keep the old text alongside it")
+	}
+
+	reloaded := request(t, handler, http.MethodGet, "/?date=2026-08-12", nil, cookie)
+	assertContains(t, reloaded, "Fire drill, not a real alarm")
+
+	notes := request(t, handler, http.MethodGet, "/notes", nil, cookie)
+	assertContains(t, notes, "Fire drill, not a real alarm")
+	if strings.Contains(notes, "Fire alarm interrupted the lesson") {
+		t.Fatal("notes log should reflect the edited text")
+	}
+}
+
 func TestNotesCanBeTaggedAndFilteredByStudent(t *testing.T) {
 	handler := NewServer()
 	server := handler

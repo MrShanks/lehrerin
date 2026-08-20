@@ -179,12 +179,15 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--green-soft)
 .lesson-notes { padding: 18px 22px; border-top: 1px solid var(--line); background: var(--surface); }
 .lesson-notes-heading { margin-bottom: 10px; color: var(--muted); font-size: 11px; font-weight: 700; text-transform: uppercase; }
 .lesson-notes-list { display: grid; gap: 8px; margin: 0 0 14px; padding: 0; list-style: none; }
-.lesson-notes-list li { padding: 10px 12px; border-left: 3px solid var(--coral); border-radius: 3px; background: var(--paper); font-size: 13px; }
-.lesson-notes-list li span { margin-right: 10px; color: var(--muted); font-size: 11px; font-weight: 700; }
+.lesson-note { display: flex; align-items: center; gap: 10px; padding: 10px 12px; border-left: 3px solid var(--coral); border-radius: 3px; background: var(--paper); font-size: 13px; }
+.lesson-note-time { color: var(--muted); font-size: 11px; font-weight: 700; white-space: nowrap; }
+.lesson-note-student { color: var(--green); white-space: nowrap; }
+.lesson-note-text { flex: 1; min-width: 0; padding: 2px 4px; border: 1px solid transparent; border-radius: 3px; background: transparent; color: inherit; font: inherit; }
+.lesson-note-text:hover { background: var(--green-soft); }
+.lesson-note-text:focus { border-color: var(--green); background: var(--surface); outline: none; }
 .lesson-notes-form { display: flex; gap: 10px; }
 .lesson-notes-form input { flex: 1; }
 .lesson-notes-form .lesson-notes-student { flex: 0 0 160px; }
-.lesson-notes-list li strong { margin-right: 8px; color: var(--green); }
 
 .notes-filters { display: flex; align-items: end; gap: 16px; margin-top: 26px; }
 .notes-filters label { color: var(--ink); font-size: 12px; text-transform: uppercase; }
