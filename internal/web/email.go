@@ -9,7 +9,6 @@ import (
 	"net/mail"
 	"net/smtp"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 	_ "time/tzdata"
@@ -98,9 +97,7 @@ func nextSchoolWeek(now time.Time) time.Time {
 }
 
 func deliveryDue(now time.Time, scheduledTime string) bool {
-	hour, _ := strconv.Atoi(scheduledTime[:2])
-	minute, _ := strconv.Atoi(scheduledTime[3:])
-	return now.Hour() > hour || now.Hour() == hour && now.Minute() >= minute
+	return now.Format("15:04") == scheduledTime
 }
 
 func (s *Server) startEmailScheduler() {

@@ -855,6 +855,26 @@ func TestScheduledEmailsSendNextDayAndWeekOnlyOnce(t *testing.T) {
 	}
 }
 
+func TestScheduledEmailDoesNotCatchUpAfterTimeChange(t *testing.T) {
+	store := newStore("")
+	store.data.Email = "teacher@example.com"
+	store.data.DailyEmail = true
+	store.data.DailyTime = "14:55"
+	sender := &recordingEmailSender{}
+	server := &Server{emailSender: sender}
+	now := time.Date(2026, time.September, 9, 15, 55, 0, 0, time.FixedZone("CEST", 2*60*60))
+
+	if err := server.sendScheduledForStore(store, now); err != nil {
+		t.Fatal(err)
+	}
+	if len(sender.messages) != 0 {
+		t.Fatalf("past delivery time sent %d messages, want 0", len(sender.messages))
+	}
+	if store.data.LastDaily != "" {
+		t.Fatalf("past delivery time updated last daily email to %q", store.data.LastDaily)
+	}
+}
+
 func TestSendTestEmailUsesNextSchoolDay(t *testing.T) {
 	store := newStore("")
 	friday := time.Date(2026, time.September, 11, 12, 0, 0, 0, time.Local)
@@ -899,6 +919,9 @@ func TestDeliveryTimezoneIsAvailable(t *testing.T) {
 	}
 	if deliveryDue(summer, "16:55") {
 		t.Fatal("16:55 Zurich should not be due at 15:55 Zurich")
+	}
+	if deliveryDue(summer, "14:55") {
+		t.Fatal("a past delivery time should not trigger an immediate catch-up email")
 	}
 }
 
