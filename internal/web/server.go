@@ -291,7 +291,11 @@ func newServer(dataDir string) http.Handler {
 	protected.HandleFunc("POST /admin/{id}/reset-password", server.requireAdmin(server.adminResetPassword))
 
 	mux := http.NewServeMux()
-	mux.Handle("GET /static/", http.StripPrefix("/static/", http.FileServer(http.FS(static))))
+	staticHandler := http.StripPrefix("/static/", http.FileServer(http.FS(static)))
+	mux.Handle("GET /static/", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-cache")
+		staticHandler.ServeHTTP(w, r)
+	}))
 	mux.HandleFunc("GET /login", server.loginPage)
 	mux.HandleFunc("POST /login", server.loginSubmit)
 	mux.HandleFunc("GET /signup", server.signupPage)

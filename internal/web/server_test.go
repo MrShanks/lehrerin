@@ -74,6 +74,17 @@ func TestYearAndTimetableViews(t *testing.T) {
 	assertContains(t, schedule, "Planner settings")
 	assertContains(t, schedule, "Automatic email delivery")
 	assertContains(t, schedule, "Send next day test")
+	assertContains(t, schedule, "/static/app.css?v=20260909-1")
+}
+
+func TestStaticAssetsRequireRevalidation(t *testing.T) {
+	response := requestWithResponse(t, NewServer(), http.MethodGet, "/static/app.css", nil, "")
+	if response.Code != http.StatusOK {
+		t.Fatalf("stylesheet returned %d", response.Code)
+	}
+	if got := response.Header().Get("Cache-Control"); got != "no-cache" {
+		t.Fatalf("stylesheet Cache-Control = %q, want no-cache", got)
+	}
 }
 
 func TestEmailDeliverySettingsPersist(t *testing.T) {
@@ -793,6 +804,18 @@ func TestSendTestEmailUsesNextSchoolDay(t *testing.T) {
 	}
 	assertContains(t, message.subject, "Monday, September 14, 2026")
 	assertContains(t, string(message.attachment), "Monday test plan")
+}
+
+func TestDeliveryTimezoneIsAvailable(t *testing.T) {
+	location, err := time.LoadLocation(deliveryTimezone)
+	if err != nil {
+		t.Fatalf("load delivery timezone: %v", err)
+	}
+	winter := time.Date(2026, time.January, 1, 12, 0, 0, 0, location)
+	_, offset := winter.Zone()
+	if offset != 60*60 {
+		t.Fatalf("Europe/Zurich winter offset = %d, want 3600", offset)
+	}
 }
 
 func TestUndoRestoresPreviousLessonAndCapsAt100Entries(t *testing.T) {

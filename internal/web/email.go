@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	_ "time/tzdata"
 )
 
 const deliveryTimezone = "Europe/Zurich"
@@ -209,7 +210,7 @@ func (s *Server) testEmail(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte("Test email could not be sent. Check the server mail configuration."))
 		return
 	}
-	w.Write([]byte("Tomorrow's school-day plan was sent. Check your inbox and spam folder."))
+	w.Write([]byte("Tomorrow's school-day plan was sent. Save settings and enable a schedule for automatic delivery."))
 }
 
 func validDeliveryEmail(value string) bool {
