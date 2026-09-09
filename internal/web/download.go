@@ -1,6 +1,7 @@
 package web
 
 import (
+	"bytes"
 	"fmt"
 	"html/template"
 	"net/http"
@@ -52,21 +53,24 @@ body{margin:0;padding:32px;color:#202622;background:#f5f3ed;font:15px/1.45 -appl
 func (s *Server) downloadDay(w http.ResponseWriter, r *http.Request) {
 	date := downloadDate(r.URL.Query().Get("date"))
 	store := s.storeFor(r)
-	data := downloadDayDataFor(store, date)
-	sendDownload(w, "day", date.Format(dateLayout), data)
+	contents, filename, _, err := renderDayAttachment(store, date)
+	if err != nil {
+		http.Error(w, "Could not create download", http.StatusInternalServerError)
+		return
+	}
+	sendDownload(w, filename, contents)
 }
 
 func (s *Server) downloadWeek(w http.ResponseWriter, r *http.Request) {
 	date := downloadDate(r.URL.Query().Get("date"))
 	start := date.AddDate(0, 0, -weekdayOffset(date.Weekday()))
 	store := s.storeFor(r)
-	days := make([]downloadWeekDay, 5)
-	for index := range days {
-		day := start.AddDate(0, 0, index)
-		data := downloadDayDataFor(store, day)
-		days[index] = downloadWeekDay{Date: data.Date, Lessons: data.Lessons, Overrides: data.Overrides}
+	contents, filename, _, err := renderWeekAttachment(store, start)
+	if err != nil {
+		http.Error(w, "Could not create download", http.StatusInternalServerError)
+		return
 	}
-	sendDownload(w, "week", start.Format(dateLayout), downloadWeekData{Teacher: dataTeacher(store), School: dataSchool(store), Start: start.Format("Monday, January 2, 2006"), End: start.AddDate(0, 0, 4).Format("Monday, January 2, 2006"), Days: days})
+	sendDownload(w, filename, contents)
 }
 
 func downloadDate(raw string) time.Time {
@@ -93,13 +97,37 @@ func dataSchool(store *Store) string {
 	return store.data.School
 }
 
-func sendDownload(w http.ResponseWriter, kind, date string, data any) {
-	filename := fmt.Sprintf("lehrerin-%s-%s.html", kind, date)
-	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Content-Disposition", "attachment; filename="+filename)
-	_ = downloadTemplate.Execute(w, struct {
+func renderDayAttachment(store *Store, date time.Time) ([]byte, string, string, error) {
+	filename := fmt.Sprintf("lehrerin-day-%s.html", date.Format(dateLayout))
+	contents, err := renderDownload("day", downloadDayDataFor(store, date))
+	return contents, filename, "Lesson plan for " + date.Format("Monday, January 2, 2006"), err
+}
+
+func renderWeekAttachment(store *Store, start time.Time) ([]byte, string, string, error) {
+	days := make([]downloadWeekDay, 5)
+	for index := range days {
+		day := start.AddDate(0, 0, index)
+		data := downloadDayDataFor(store, day)
+		days[index] = downloadWeekDay{Date: data.Date, Lessons: data.Lessons, Overrides: data.Overrides}
+	}
+	data := downloadWeekData{Teacher: dataTeacher(store), School: dataSchool(store), Start: start.Format("Monday, January 2, 2006"), End: start.AddDate(0, 0, 4).Format("Monday, January 2, 2006"), Days: days}
+	filename := fmt.Sprintf("lehrerin-week-%s.html", start.Format(dateLayout))
+	contents, err := renderDownload("week", data)
+	return contents, filename, "Lesson plans for week of " + start.Format("January 2, 2006"), err
+}
+
+func renderDownload(kind string, data any) ([]byte, error) {
+	var contents bytes.Buffer
+	err := downloadTemplate.Execute(&contents, struct {
 		Kind  string
 		Title string
 		Data  any
 	}{kind, "Lehrerin lesson plan", data})
+	return contents.Bytes(), err
+}
+
+func sendDownload(w http.ResponseWriter, filename string, contents []byte) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Content-Disposition", "attachment; filename="+filename)
+	_, _ = w.Write(contents)
 }

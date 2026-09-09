@@ -81,6 +81,14 @@ type DayOverride struct {
 type storeData struct {
 	Teacher      string                    `json:"teacher"`
 	School       string                    `json:"school"`
+	Email        string                    `json:"email,omitempty"`
+	DailyEmail   bool                      `json:"dailyEmail,omitempty"`
+	DailyTime    string                    `json:"dailyTime,omitempty"`
+	WeeklyEmail  bool                      `json:"weeklyEmail,omitempty"`
+	WeeklyDay    string                    `json:"weeklyDay,omitempty"`
+	WeeklyTime   string                    `json:"weeklyTime,omitempty"`
+	LastDaily    string                    `json:"lastDailyEmail,omitempty"`
+	LastWeekly   string                    `json:"lastWeeklyEmail,omitempty"`
 	Subjects     []string                  `json:"subjects"`
 	Classes      []string                  `json:"classes"`
 	Students     []string                  `json:"students"`
@@ -126,6 +134,13 @@ type pageData struct {
 	IsAdmin         bool
 	Teacher         string
 	School          string
+	Email           string
+	DailyEmail      bool
+	DailyTime       string
+	WeeklyEmail     bool
+	WeeklyDay       string
+	WeeklyTime      string
+	MailConfigured  bool
 	Date            string
 	DateInput       string
 	WeekNumber      int
@@ -207,8 +222,9 @@ type scheduleData struct {
 }
 
 type Server struct {
-	templates *template.Template
-	accounts  *AccountManager
+	templates   *template.Template
+	accounts    *AccountManager
+	emailSender emailSender
 }
 
 func (s *Server) storeFor(r *http.Request) *Store {
@@ -245,7 +261,8 @@ func newServer(dataDir string) http.Handler {
 		panic(err)
 	}
 
-	server := &Server{templates: templates, accounts: newAccountManager(dataDir)}
+	server := &Server{templates: templates, accounts: newAccountManager(dataDir), emailSender: newSMTPEmailSenderFromEnv()}
+	server.startEmailScheduler()
 
 	protected := http.NewServeMux()
 	protected.HandleFunc("GET /", server.agenda)
@@ -328,6 +345,9 @@ func defaultStoreData() storeData {
 	data := storeData{
 		Teacher:      "Ms. Weber",
 		School:       "North Community School",
+		DailyTime:    "18:00",
+		WeeklyDay:    "Sunday",
+		WeeklyTime:   "18:00",
 		Subjects:     []string{"Mathematics", "English", "Biology", "Science", "History", "Geography", "Music", "Art", "Physical Education"},
 		Classes:      []string{"7A", "7B", "7C", "8A", "8B", "8C", "9A", "9B", "9C", "9D"},
 		Students:     []string{},
@@ -765,7 +785,10 @@ func (s *Server) baseData(store *Store, r *http.Request, view string) pageData {
 	defer store.mu.RUnlock()
 	return pageData{
 		View: view, IsAdmin: s.isAdminRequest(r), Teacher: store.data.Teacher, School: store.data.School,
-		Subjects: append([]string(nil), store.data.Subjects...), Classes: append([]string(nil), store.data.Classes...),
+		Email: store.data.Email, DailyEmail: store.data.DailyEmail, DailyTime: deliveryTime(store.data.DailyTime),
+		WeeklyEmail: store.data.WeeklyEmail, WeeklyDay: deliveryWeekday(store.data.WeeklyDay), WeeklyTime: deliveryTime(store.data.WeeklyTime),
+		MailConfigured: s.emailSender != nil,
+		Subjects:       append([]string(nil), store.data.Subjects...), Classes: append([]string(nil), store.data.Classes...),
 		Students: append([]string(nil), store.data.Students...),
 		Weekdays: weekdays(), SchoolYear: "2026/2027", YearStart: "August 10, 2026", YearEnd: "July 2, 2027",
 	}
@@ -1045,11 +1068,24 @@ func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid input", http.StatusBadRequest)
 		return
 	}
+	email := strings.TrimSpace(r.FormValue("email"))
+	dailyEmail := r.FormValue("daily_email") == "on"
+	weeklyEmail := r.FormValue("weekly_email") == "on"
+	if (dailyEmail || weeklyEmail) && !validDeliveryEmail(email) {
+		http.Error(w, "A valid email address is required for automatic delivery", http.StatusBadRequest)
+		return
+	}
 	store := s.storeFor(r)
 	store.mu.Lock()
 	store.pushHistoryLocked()
 	store.data.Teacher = strings.TrimSpace(r.FormValue("teacher"))
 	store.data.School = strings.TrimSpace(r.FormValue("school"))
+	store.data.Email = email
+	store.data.DailyEmail = dailyEmail
+	store.data.DailyTime = deliveryTime(r.FormValue("daily_time"))
+	store.data.WeeklyEmail = weeklyEmail
+	store.data.WeeklyDay = deliveryWeekday(r.FormValue("weekly_day"))
+	store.data.WeeklyTime = deliveryTime(r.FormValue("weekly_time"))
 	store.data.Subjects = splitLines(r.FormValue("subjects"))
 	store.data.Classes = splitLines(r.FormValue("classes"))
 	store.data.Students = splitLines(r.FormValue("students"))

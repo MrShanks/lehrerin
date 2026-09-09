@@ -3,10 +3,13 @@ services:
     image: staffolis/lehrerin:latest
     container_name: lehrerin_app
     restart: unless-stopped
-    env_file:
-      - .env
     environment:
-      - PORT=8080
+      PORT: "8080"
+      SMTP_HOST: "smtp.gmail.com"
+      SMTP_PORT: "587"
+      SMTP_USERNAME: "your-account@gmail.com"
+      SMTP_PASSWORD: "replace-with-your-google-app-password"
+      SMTP_FROM: "your-account@gmail.com"
     volumes:
       - ./data:/app/data
     expose:

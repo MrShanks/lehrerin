@@ -15,6 +15,20 @@ import (
 	"time"
 )
 
+type sentEmail struct {
+	to, subject, filename string
+	attachment            []byte
+}
+
+type recordingEmailSender struct {
+	messages []sentEmail
+}
+
+func (s *recordingEmailSender) Send(to, subject, filename string, attachment []byte) error {
+	s.messages = append(s.messages, sentEmail{to: to, subject: subject, filename: filename, attachment: append([]byte(nil), attachment...)})
+	return nil
+}
+
 func TestAgendaInheritsTemplateAndSavesDailyOverride(t *testing.T) {
 	dir := t.TempDir()
 	handler := NewPersistentServer(dir)
@@ -58,6 +72,34 @@ func TestYearAndTimetableViews(t *testing.T) {
 	assertContains(t, schedule, "Monday-1-time")
 	assertContains(t, schedule, "Save timetable")
 	assertContains(t, schedule, "Planner settings")
+	assertContains(t, schedule, "Automatic email delivery")
+}
+
+func TestEmailDeliverySettingsPersist(t *testing.T) {
+	dir := t.TempDir()
+	handler := NewPersistentServer(dir)
+	cookie := signUp(t, handler)
+	response := requestWithResponse(t, handler, http.MethodPost, "/settings", url.Values{
+		"teacher": {"Ms. Weber"}, "school": {"North Community School"},
+		"email": {"teacher@example.com"}, "daily_email": {"on"}, "daily_time": {"17:30"},
+		"weekly_email": {"on"}, "weekly_day": {"Saturday"}, "weekly_time": {"09:15"},
+	}, cookie)
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("settings returned %d: %s", response.Code, response.Body.String())
+	}
+
+	reloaded := request(t, NewPersistentServer(dir), http.MethodGet, "/schedule", nil, cookie)
+	assertContains(t, reloaded, `value="teacher@example.com"`)
+	assertContains(t, reloaded, `name="daily_time" value="17:30"`)
+	assertContains(t, reloaded, `value="Saturday" selected`)
+	assertContains(t, reloaded, `name="weekly_time" value="09:15"`)
+
+	invalid := requestWithResponse(t, handler, http.MethodPost, "/settings", url.Values{
+		"email": {"not-an-email"}, "daily_email": {"on"},
+	}, cookie)
+	if invalid.Code != http.StatusBadRequest {
+		t.Fatalf("invalid delivery email returned %d, want 400", invalid.Code)
+	}
 }
 
 func TestSchoolYearMarksToday(t *testing.T) {
@@ -684,6 +726,46 @@ func TestDownloadWeekUsesSelectedDateAndCurrentAccount(t *testing.T) {
 	assertContains(t, response.Body.String(), "A weekly plan")
 	if strings.Contains(response.Body.String(), "B private plan") {
 		t.Fatal("week download contains another account's lesson")
+	}
+}
+
+func TestScheduledEmailsSendNextDayAndWeekOnlyOnce(t *testing.T) {
+	store := newStore("")
+	store.data.Email = "teacher@example.com"
+	store.data.DailyEmail = true
+	store.data.DailyTime = "18:00"
+	store.data.WeeklyEmail = true
+	store.data.WeeklyDay = "Sunday"
+	store.data.WeeklyTime = "18:00"
+	lesson := store.agenda(time.Date(2026, time.September, 14, 0, 0, 0, 0, time.Local))[0]
+	lesson.Slot.Subject = "Mathematics"
+	lesson.Slot.Class = "8B"
+	lesson.Slot.Topic = "Monday fractions"
+	if err := store.saveLessonOverride(time.Date(2026, time.September, 14, 0, 0, 0, 0, time.Local), 0, lesson); err != nil {
+		t.Fatal(err)
+	}
+
+	sender := &recordingEmailSender{}
+	server := &Server{emailSender: sender}
+	now := time.Date(2026, time.September, 13, 18, 0, 0, 0, time.FixedZone("CEST", 2*60*60))
+	if err := server.sendScheduledForStore(store, now); err != nil {
+		t.Fatal(err)
+	}
+	if err := server.sendScheduledForStore(store, now.Add(time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+
+	if len(sender.messages) != 2 {
+		t.Fatalf("sent %d messages, want one daily and one weekly", len(sender.messages))
+	}
+	if sender.messages[0].to != "teacher@example.com" || sender.messages[0].filename != "lehrerin-day-2026-09-14.html" {
+		t.Fatalf("unexpected daily email: %+v", sender.messages[0])
+	}
+	if sender.messages[1].filename != "lehrerin-week-2026-09-14.html" {
+		t.Fatalf("unexpected weekly filename %q", sender.messages[1].filename)
+	}
+	for _, message := range sender.messages {
+		assertContains(t, string(message.attachment), "Monday fractions")
 	}
 }
 

@@ -40,6 +40,13 @@
     <form class="settings-form" hx-post="/settings">
       <div class="dialog-heading"><div><p class="eyebrow">Configuration</p><h2>Planner settings</h2></div><button class="icon-button" type="button" command="close" commandfor="settings-dialog" aria-label="Close">×</button></div>
       <div class="form-row"><label>Teacher<input name="teacher" value="{{.Teacher}}"></label><label>School<input name="school" value="{{.School}}"></label></div>
+      <fieldset class="email-settings">
+        <legend>Automatic email delivery</legend>
+        <label>Email address<input type="email" name="email" value="{{.Email}}" placeholder="teacher@example.com"></label>
+        <div class="delivery-row"><label class="ready-toggle"><input type="checkbox" name="daily_email" {{if .DailyEmail}}checked{{end}}> Send next school day</label><label>At<input type="time" name="daily_time" value="{{.DailyTime}}"></label></div>
+        <div class="delivery-row"><label class="ready-toggle"><input type="checkbox" name="weekly_email" {{if .WeeklyEmail}}checked{{end}}> Send next school week</label><label>On<select name="weekly_day">{{range .Weekdays}}<option value="{{.}}" {{if eq . $.WeeklyDay}}selected{{end}}>{{.}}</option>{{end}}<option value="Saturday" {{if eq .WeeklyDay "Saturday"}}selected{{end}}>Saturday</option><option value="Sunday" {{if eq .WeeklyDay "Sunday"}}selected{{end}}>Sunday</option></select></label><label>At<input type="time" name="weekly_time" value="{{.WeeklyTime}}"></label></div>
+        <p>Delivery times use Europe/Zurich. {{if .MailConfigured}}Gmail is configured.{{else}}Automatic sending is unavailable until Gmail is configured on the server.{{end}}</p>
+      </fieldset>
       <div class="form-row"><label>Subjects, one per line<textarea name="subjects" rows="10">{{range .Subjects}}{{.}}
 {{end}}</textarea></label><label>Classes, one per line<textarea name="classes" rows="10">{{range .Classes}}{{.}}
 {{end}}</textarea></label></div>
