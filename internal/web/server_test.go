@@ -22,7 +22,9 @@ func TestAgendaInheritsTemplateAndSavesDailyOverride(t *testing.T) {
 
 	dashboard := request(t, handler, http.MethodGet, "/?date=2026-08-12", nil, cookie)
 	assertContains(t, dashboard, "Wednesday, August 12, 2026")
+	assertContains(t, dashboard, "Daily agenda · Week 33")
 	assertContains(t, dashboard, "Mathematics")
+	assertContains(t, dashboard, "data-fit-text")
 	assertContains(t, dashboard, "Learning objectives")
 	assertContains(t, dashboard, "Lunch break")
 
@@ -54,6 +56,22 @@ func TestYearAndTimetableViews(t *testing.T) {
 	assertContains(t, schedule, "Monday-1-time")
 	assertContains(t, schedule, "Save timetable")
 	assertContains(t, schedule, "Planner settings")
+}
+
+func TestSchoolYearMarksToday(t *testing.T) {
+	today := time.Date(2026, time.September, 9, 12, 0, 0, 0, time.Local)
+	weeks := schoolWeeks(nil, today)
+	for _, week := range weeks {
+		for _, day := range week.Days {
+			if day.Date == "2026-09-09" {
+				if !day.Today {
+					t.Fatal("today is not marked in the school year")
+				}
+				return
+			}
+		}
+	}
+	t.Fatal("today is missing from the school year")
 }
 
 func TestAgendaSubjectFilterShowsWholeWeek(t *testing.T) {

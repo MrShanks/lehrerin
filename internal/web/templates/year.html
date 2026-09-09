@@ -5,6 +5,6 @@
 </section>
 <section class="year-grid" aria-label="School year calendar">
   <div class="year-row year-head"><strong>Week</strong><strong>Monday</strong><strong>Tuesday</strong><strong>Wednesday</strong><strong>Thursday</strong><strong>Friday</strong></div>
-  {{range .Weeks}}<div class="year-row"><strong class="week-number">W{{.Number}}</strong>{{range .Days}}<a href="/?date={{.Date}}"{{if .Overridden}} class="year-day-overridden"{{end}}><span>{{.Day}}</span><strong>{{.Number}}</strong>{{if .EventCount}}<small>{{.EventCount}} event{{if ne .EventCount 1}}s{{end}}</small>{{end}}</a>{{end}}</div>{{end}}
+  {{range .Weeks}}<div class="year-row"><strong class="week-number">W{{.Number}}</strong>{{range .Days}}<a href="/?date={{.Date}}"{{if or .Today .Overridden}} class="{{if .Today}}year-day-today{{end}}{{if and .Today .Overridden}} {{end}}{{if .Overridden}}year-day-overridden{{end}}"{{end}}{{if .Today}} aria-current="date"{{end}}><span>{{.Day}}</span><strong>{{.Number}}</strong>{{if .Today}}<small class="today-label">Today</small>{{end}}{{if .EventCount}}<small>{{.EventCount}} event{{if ne .EventCount 1}}s{{end}}</small>{{end}}</a>{{end}}</div>{{end}}
 </section>
 {{end}}

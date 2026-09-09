@@ -90,8 +90,35 @@
       const swapped = event.target;
       if (swapped && swapped.matches && swapped.matches('.lesson-card')) {
         swapped.open = true;
+        fitLessonText(swapped);
       }
     });
+
+    function fitLessonTextarea(textarea) {
+      const maximumSize = 13;
+      const minimumSize = 11;
+      if (!textarea.clientHeight) return;
+	  textarea.style.height = '';
+      textarea.style.fontSize = maximumSize + 'px';
+      for (let size = maximumSize; textarea.scrollHeight > textarea.clientHeight && size > minimumSize; size -= 0.5) {
+        textarea.style.fontSize = Math.max(minimumSize, size - 0.5) + 'px';
+      }
+	  if (textarea.scrollHeight > textarea.clientHeight) textarea.style.height = textarea.scrollHeight + 'px';
+    }
+
+    function fitLessonText(root) {
+      root.querySelectorAll('[data-fit-text]').forEach(fitLessonTextarea);
+    }
+
+    document.addEventListener('input', function (event) {
+      if (event.target.matches('[data-fit-text]')) fitLessonTextarea(event.target);
+    });
+
+    document.addEventListener('toggle', function (event) {
+      if (event.target.matches('.lesson-card') && event.target.open) fitLessonText(event.target);
+    }, true);
+
+    fitLessonText(document);
 
     (function () {
       const timers = new WeakMap();

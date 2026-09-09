@@ -170,7 +170,7 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--green-soft)
 .phase-row { border-top: 1px solid var(--line); background: white; }
 .phase-row:first-of-type { border-top: 0; }
 .phase-row strong { padding: 12px 10px; color: var(--green); font-size: 12px; }
-.phase-row textarea { min-height: 74px; border: 0; border-left: 1px solid var(--line); border-radius: 0; }
+.phase-row textarea { min-height: 74px; border: 0; border-left: 1px solid var(--line); border-radius: 0; font-size: 13px; }
 .phase-row input { height: auto; min-height: 74px; border: 0; border-left: 1px solid var(--line); border-radius: 0; padding: 12px 6px; font-size: 12px; text-align: center; }
 .lesson-actions { display: flex; justify-content: flex-end; align-items: center; gap: 18px; margin-top: 16px; }
 .autosave-hint { margin-right: auto; color: var(--muted); font-size: 12px; }
@@ -243,6 +243,9 @@ input:focus, textarea:focus, select:focus { outline: 2px solid var(--green-soft)
 .year-row a:hover { background: var(--green-soft); color: var(--green); }
 .year-day-overridden { background: var(--green-soft); }
 .year-day-overridden:hover { background: #d3e4d9; }
+.year-row .year-day-today { position: relative; outline: 3px solid var(--coral); outline-offset: -3px; background: #fdf3f1; }
+.year-row .year-day-today:hover { color: var(--ink); background: #fae5e0; }
+.year-row a .today-label { color: var(--coral); }
 .year-head { position: sticky; top: 72px; z-index: 5; color: white; background: var(--green); border-radius: 6px 6px 0 0; overflow: hidden; }
 .year-head > * { min-height: 44px; font-size: 11px; text-transform: uppercase; }
 .week-number { color: var(--muted); background: #f8f7f2; font-size: 12px; }

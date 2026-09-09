@@ -1,6 +1,6 @@
 {{define "agenda"}}
 <section class="page-heading agenda-heading">
-  <div><p class="eyebrow">Daily agenda</p><h1>{{.Date}}</h1><p class="lede">Plan each lesson from arrival to assessment, with materials and differentiation close at hand.</p></div>
+  <div><p class="eyebrow">Daily agenda · Week {{.WeekNumber}}</p><h1>{{.Date}}</h1><p class="lede">Plan each lesson from arrival to assessment, with materials and differentiation close at hand.</p></div>
   <div class="date-controls">
     <a class="secondary button-link agenda-action" href="/download/day?date={{.DateInput}}">Download day</a>
     <a class="secondary button-link agenda-action" href="/download/week?date={{.DateInput}}">Download week</a>
@@ -244,7 +244,7 @@
     <div class="phase-table" role="table" aria-label="Lesson phases">
       <div class="phase-head" role="row"><span>Phase</span><span>Time</span><span>Content / description</span><span>Materials</span><span>Differentiation / notes</span></div>
       {{range $index, $phase := .Lesson.Phases}}
-      <div class="phase-row" role="row"><strong>{{$phase.Name}}</strong><input name="phase_{{$index}}_duration" value="{{$phase.Duration}}" placeholder="10 min"><textarea name="phase_{{$index}}_content" rows="2" placeholder="What will happen?">{{$phase.Content}}</textarea><textarea name="phase_{{$index}}_materials" rows="2" placeholder="Resources">{{$phase.Materials}}</textarea><textarea name="phase_{{$index}}_notes" rows="2" placeholder="Support, extension, notes">{{$phase.Notes}}</textarea></div>
+      <div class="phase-row" role="row"><strong>{{$phase.Name}}</strong><input name="phase_{{$index}}_duration" value="{{$phase.Duration}}" placeholder="10 min"><textarea name="phase_{{$index}}_content" rows="2" placeholder="What will happen?" data-fit-text>{{$phase.Content}}</textarea><textarea name="phase_{{$index}}_materials" rows="2" placeholder="Resources" data-fit-text>{{$phase.Materials}}</textarea><textarea name="phase_{{$index}}_notes" rows="2" placeholder="Support, extension, notes" data-fit-text>{{$phase.Notes}}</textarea></div>
       {{end}}
     </div>
     <div class="lesson-actions"><label class="ready-toggle"><input type="checkbox" name="complete" {{if .Lesson.Complete}}checked{{end}}> Ready to teach</label><span class="autosave-hint">Changes save automatically</span></div>

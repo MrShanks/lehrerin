@@ -128,6 +128,7 @@ type pageData struct {
 	School          string
 	Date            string
 	DateInput       string
+	WeekNumber      int
 	PrevDate        string
 	NextDate        string
 	Week            []dayLink
@@ -665,7 +666,7 @@ func (s *Server) year(w http.ResponseWriter, r *http.Request) {
 		eventCounts[key] = len(overrides)
 	}
 	store.mu.RUnlock()
-	data.Weeks = schoolWeeks(eventCounts)
+	data.Weeks = schoolWeeks(eventCounts, time.Now())
 	s.render(w, "layout", data)
 }
 
@@ -708,6 +709,7 @@ func (s *Server) agendaData(store *Store, r *http.Request, date time.Time, subje
 	data := s.baseData(store, r, "agenda")
 	data.Date = date.Format("Monday, January 2, 2006")
 	data.DateInput = date.Format(dateLayout)
+	_, data.WeekNumber = date.ISOWeek()
 	data.PrevDate = date.AddDate(0, 0, -7).Format(dateLayout)
 	data.NextDate = date.AddDate(0, 0, 7).Format(dateLayout)
 	data.Week = weekLinks(date)
@@ -1178,8 +1180,9 @@ func weekLinks(selected time.Time) []dayLink {
 	return links
 }
 
-func schoolWeeks(eventCounts map[string]int) []weekRow {
+func schoolWeeks(eventCounts map[string]int, today time.Time) []weekRow {
 	var weeks []weekRow
+	todayKey := today.Format(dateLayout)
 	for monday := schoolYearStart; !monday.After(schoolYearEnd); monday = monday.AddDate(0, 0, 7) {
 		_, number := monday.ISOWeek()
 		row := weekRow{Number: number}
@@ -1187,7 +1190,7 @@ func schoolWeeks(eventCounts map[string]int) []weekRow {
 			date := monday.AddDate(0, 0, day)
 			key := date.Format(dateLayout)
 			count := eventCounts[key]
-			row.Days = append(row.Days, dayLink{Date: key, Day: date.Format("Monday"), Number: date.Format("Jan 2"), Overridden: count > 0, EventCount: count})
+			row.Days = append(row.Days, dayLink{Date: key, Day: date.Format("Monday"), Number: date.Format("Jan 2"), Today: key == todayKey, Overridden: count > 0, EventCount: count})
 		}
 		weeks = append(weeks, row)
 	}
