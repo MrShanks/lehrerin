@@ -121,6 +121,78 @@
     fitLessonText(document);
 
     (function () {
+      const storageKey = 'lehrerin-copied-preparation';
+
+      function copiedPreparation() {
+        try {
+          return JSON.parse(sessionStorage.getItem(storageKey));
+        } catch (error) {
+          sessionStorage.removeItem(storageKey);
+          return null;
+        }
+      }
+
+      function updatePasteButtons(root) {
+        const copied = copiedPreparation();
+        root.querySelectorAll('[data-paste-preparation]').forEach(function (button) {
+          button.disabled = !copied;
+          button.title = copied ? 'Paste from ' + copied.label : 'Copy another lesson first';
+        });
+      }
+
+      document.addEventListener('click', function (event) {
+        const copyButton = event.target.closest('[data-copy-preparation]');
+        if (copyButton) {
+          const card = copyButton.closest('.lesson-card');
+          const form = copyButton.closest('.lesson-plan');
+          const preparation = {
+            label: card.querySelector('.lesson-title').innerText.trim().replace(/\s+/g, ' '),
+            subject: form.elements.subject.value,
+            topic: form.elements.topic.value,
+            complete: form.elements.complete.checked,
+            phases: Array.from(form.querySelectorAll('.phase-row')).map(function (row) {
+              return {
+                duration: row.querySelector('[name$="_duration"]').value,
+                content: row.querySelector('[name$="_content"]').value,
+                materials: row.querySelector('[name$="_materials"]').value,
+                notes: row.querySelector('[name$="_notes"]').value,
+              };
+            }),
+          };
+          sessionStorage.setItem(storageKey, JSON.stringify(preparation));
+          form.querySelector('.autosave-hint').textContent = 'Preparation copied';
+          updatePasteButtons(document);
+          return;
+        }
+
+        const pasteButton = event.target.closest('[data-paste-preparation]');
+        if (!pasteButton) return;
+        const preparation = copiedPreparation();
+        if (!preparation || !window.confirm('Replace this lesson preparation with ' + preparation.label + '?')) return;
+        const form = pasteButton.closest('.lesson-plan');
+        form.elements.subject.value = preparation.subject || '';
+        form.elements.topic.value = preparation.topic || '';
+        form.elements.complete.checked = Boolean(preparation.complete);
+        form.querySelectorAll('.phase-row').forEach(function (row, index) {
+          const phase = preparation.phases[index] || {};
+          row.querySelector('[name$="_duration"]').value = phase.duration || '';
+          row.querySelector('[name$="_content"]').value = phase.content || '';
+          row.querySelector('[name$="_materials"]').value = phase.materials || '';
+          row.querySelector('[name$="_notes"]').value = phase.notes || '';
+        });
+        fitLessonText(form);
+        form.querySelector('.autosave-hint').textContent = 'Preparation pasted · saving…';
+        form.elements.topic.dispatchEvent(new Event('input', { bubbles: true }));
+      });
+
+      document.body.addEventListener('htmx:afterSwap', function (event) {
+        if (event.target.matches && event.target.matches('.lesson-card')) updatePasteButtons(event.target);
+      });
+
+      updatePasteButtons(document);
+    })();
+
+    (function () {
       const timers = new WeakMap();
 
       function scheduleAutosave(form, delay) {

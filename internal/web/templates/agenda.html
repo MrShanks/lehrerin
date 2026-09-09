@@ -247,7 +247,14 @@
       <div class="phase-row" role="row"><strong>{{$phase.Name}}</strong><input name="phase_{{$index}}_duration" value="{{$phase.Duration}}" placeholder="10 min"><textarea name="phase_{{$index}}_content" rows="2" placeholder="What will happen?" data-fit-text>{{$phase.Content}}</textarea><textarea name="phase_{{$index}}_materials" rows="2" placeholder="Resources" data-fit-text>{{$phase.Materials}}</textarea><textarea name="phase_{{$index}}_notes" rows="2" placeholder="Support, extension, notes" data-fit-text>{{$phase.Notes}}</textarea></div>
       {{end}}
     </div>
-    <div class="lesson-actions"><label class="ready-toggle"><input type="checkbox" name="complete" {{if .Lesson.Complete}}checked{{end}}> Ready to teach</label><span class="autosave-hint">Changes save automatically</span></div>
+    <div class="lesson-actions">
+      <span class="autosave-hint" aria-live="polite">Changes save automatically</span>
+      <div class="lesson-copy-actions">
+        <button class="secondary" type="button" data-copy-preparation>Copy preparation</button>
+        <button class="secondary" type="button" data-paste-preparation disabled>Paste preparation</button>
+      </div>
+      <label class="ready-toggle"><input type="checkbox" name="complete" {{if .Lesson.Complete}}checked{{end}}> Ready to teach</label>
+    </div>
   </form>
   <div class="lesson-notes">
     <p class="lesson-notes-heading">Notes</p>

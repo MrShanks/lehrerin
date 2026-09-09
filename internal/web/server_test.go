@@ -25,6 +25,8 @@ func TestAgendaInheritsTemplateAndSavesDailyOverride(t *testing.T) {
 	assertContains(t, dashboard, "Daily agenda · Week 33")
 	assertContains(t, dashboard, "Mathematics")
 	assertContains(t, dashboard, "data-fit-text")
+	assertContains(t, dashboard, "data-copy-preparation")
+	assertContains(t, dashboard, "data-paste-preparation")
 	assertContains(t, dashboard, "Learning objectives")
 	assertContains(t, dashboard, "Lunch break")
 
