@@ -71,7 +71,7 @@ func TestYearAndTimetableViews(t *testing.T) {
 	assertContains(t, schedule, "Weekly timetable")
 	assertContains(t, schedule, "Monday-1-time")
 	assertContains(t, schedule, "Save timetable")
-	assertContains(t, schedule, "/static/app.css?v=20260909-1")
+	assertContains(t, schedule, "/static/app.css?v=20260909-2")
 	if strings.Contains(schedule, `id="settings-dialog"`) {
 		t.Fatal("settings dialog should not be embedded in application pages")
 	}
@@ -251,6 +251,46 @@ func TestDayAndWeekOverride(t *testing.T) {
 		body := request(t, server, http.MethodGet, "/?date="+date, nil, cookie)
 		assertContains(t, body, "Sports week")
 	}
+}
+
+func TestPartialDayOverrideKeepsUnaffectedLessons(t *testing.T) {
+	handler := NewServer()
+	cookie := signUp(t, handler)
+
+	request(t, handler, http.MethodPost, "/agenda/2026-08-12/override", url.Values{
+		"title": {"Morning assembly"}, "start": {"2026-08-12"}, "end": {"2026-08-12"},
+		"override_scope": {"lessons"}, "lesson_slot": {"1", "2"},
+	}, cookie)
+
+	body := request(t, handler, http.MethodGet, "/?date=2026-08-12", nil, cookie)
+	assertContains(t, body, "Morning assembly")
+	assertContains(t, body, "Replaces lessons 1, 2")
+	assertContains(t, body, `id="lesson-3"`)
+	if strings.Contains(body, `id="lesson-1"`) || strings.Contains(body, `id="lesson-2"`) {
+		t.Fatal("partial-day event still shows lessons it replaces")
+	}
+
+	request(t, handler, http.MethodPost, "/agenda/2026-08-12/lessons/3", url.Values{
+		"time": {"09:10-09:55"}, "subject": {"Biology"}, "topic": {"Cell structure"},
+	}, cookie)
+	body = request(t, handler, http.MethodGet, "/?date=2026-08-12", nil, cookie)
+	assertContains(t, body, "Cell structure")
+
+	download := request(t, handler, http.MethodGet, "/download/day?date=2026-08-12", nil, cookie)
+	assertContains(t, download, "Morning assembly")
+	assertContains(t, download, "Cell structure")
+}
+
+func TestPartialDayOverrideRequiresLesson(t *testing.T) {
+	handler := NewServer()
+	cookie := signUp(t, handler)
+	response := requestWithResponse(t, handler, http.MethodPost, "/agenda/2026-08-12/override", url.Values{
+		"title": {"Assembly"}, "start": {"2026-08-12"}, "override_scope": {"lessons"},
+	}, cookie)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("partial override without a lesson returned %d", response.Code)
+	}
+	assertContains(t, response.Body.String(), "select at least one lesson period")
 }
 
 func TestDayOverrideActivities(t *testing.T) {

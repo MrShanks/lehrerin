@@ -73,9 +73,10 @@ type Activity struct {
 }
 
 type DayOverride struct {
-	Title      string     `json:"title"`
-	Notes      string     `json:"notes"`
-	Activities []Activity `json:"activities"`
+	Title       string     `json:"title"`
+	Notes       string     `json:"notes"`
+	Activities  []Activity `json:"activities"`
+	LessonSlots []int      `json:"lessonSlots,omitempty"`
 }
 
 type storeData struct {
@@ -165,6 +166,7 @@ type pageData struct {
 	YearEnd         string
 	Overridden      bool
 	Overrides       []overrideView
+	LessonTimes     []string
 	Notes           []noteView
 	NoteStudent     string
 	NoteStudents    []string
@@ -185,10 +187,12 @@ type lessonData struct {
 }
 
 type overrideView struct {
-	Index      int
-	Title      string
-	Notes      string
-	Activities []Activity
+	Index       int
+	Title       string
+	Notes       string
+	Activities  []Activity
+	LessonSlots []int
+	ScopeLabel  string
 }
 
 type noteView struct {
@@ -241,6 +245,7 @@ func NewPersistentServer(dataDir string) http.Handler {
 
 func newServer(dataDir string) http.Handler {
 	functions := template.FuncMap{
+		"add": func(left, right int) int { return left + right },
 		"lessonData": func(date string, lesson Lesson, subjects, classes, students []string) lessonData {
 			return lessonData{Date: date, Lesson: lesson, Subjects: subjects, Classes: classes, Students: students}
 		},
@@ -406,21 +411,30 @@ func (s *Store) agenda(date time.Time) []Lesson {
 // keeps slots the teacher hasn't edited in sync with later timetable changes.
 func (s *Store) agendaLocked(date time.Time) []Lesson {
 	key := date.Format(dateLayout)
-	if len(s.data.DayOverrides[key]) > 0 {
-		return nil
+	replacedSlots := make(map[int]bool)
+	for _, dayOverride := range s.data.DayOverrides[key] {
+		if len(dayOverride.LessonSlots) == 0 {
+			return nil
+		}
+		for _, slotNumber := range dayOverride.LessonSlots {
+			replacedSlots[slotNumber] = true
+		}
 	}
 	overrides := s.data.Agendas[key]
 	templateSlots := s.data.Schedule[date.Weekday().String()]
 	if len(templateSlots) == 0 {
 		templateSlots = blankSlots()
 	}
-	lessons := make([]Lesson, len(templateSlots))
+	lessons := make([]Lesson, 0, len(templateSlots))
 	for index, slot := range templateSlots {
-		if override, ok := overrides[index]; ok {
-			lessons[index] = cloneLesson(override)
+		if replacedSlots[slot.Number] {
 			continue
 		}
-		lessons[index] = Lesson{Slot: slot, Phases: phases()}
+		if override, ok := overrides[index]; ok {
+			lessons = append(lessons, cloneLesson(override))
+			continue
+		}
+		lessons = append(lessons, Lesson{Slot: slot, Phases: phases()})
 	}
 	return lessons
 }
@@ -428,6 +442,15 @@ func (s *Store) agendaLocked(date time.Time) []Lesson {
 func cloneLesson(lesson Lesson) Lesson {
 	lesson.Phases = append([]Phase(nil), lesson.Phases...)
 	return lesson
+}
+
+func lessonForSlot(lessons []Lesson, slotNumber int) (Lesson, bool) {
+	for _, lesson := range lessons {
+		if lesson.Slot.Number == slotNumber {
+			return lesson, true
+		}
+	}
+	return Lesson{}, false
 }
 
 // lessonHasPlan reports whether a lesson has any recorded phase content or
@@ -745,6 +768,7 @@ func (s *Server) agendaData(store *Store, r *http.Request, date time.Time, subje
 	data.Week = weekLinks(date)
 	data.SubjectFilter = subject
 	data.ClassFilter = class
+	data.LessonTimes = append([]string(nil), lessonTimes...)
 	if subject != "" || class != "" {
 		data.SubjectWeek, data.SubjectCount = s.subjectWeek(store, date, subject, class)
 	}
@@ -756,7 +780,10 @@ func (s *Server) agendaData(store *Store, r *http.Request, date time.Time, subje
 			if activities == nil {
 				activities = []Activity{}
 			}
-			data.Overrides[index] = overrideView{Index: index, Title: override.Title, Notes: override.Notes, Activities: activities}
+			data.Overrides[index] = overrideView{
+				Index: index, Title: override.Title, Notes: override.Notes, Activities: activities,
+				LessonSlots: override.LessonSlots, ScopeLabel: overrideScopeLabel(override.LessonSlots),
+			}
 		}
 	}
 	data.Lessons = store.agenda(date)
@@ -822,7 +849,11 @@ func (s *Server) saveLesson(w http.ResponseWriter, r *http.Request) {
 
 	store := s.storeFor(r)
 	lessons := store.agenda(date)
-	lesson := lessons[slotIndex]
+	lesson, ok := lessonForSlot(lessons, slotIndex+1)
+	if !ok {
+		http.Error(w, "Lesson is replaced by an event", http.StatusBadRequest)
+		return
+	}
 	lesson.Slot.Time = strings.TrimSpace(r.FormValue("time"))
 	lesson.Slot.Subject = strings.TrimSpace(r.FormValue("subject"))
 	lesson.Slot.Class = strings.TrimSpace(r.FormValue("class"))
@@ -873,7 +904,11 @@ func (s *Server) addLessonNote(w http.ResponseWriter, r *http.Request) {
 
 	store := s.storeFor(r)
 	lessons := store.agenda(date)
-	lesson := lessons[slotIndex]
+	lesson, ok := lessonForSlot(lessons, slotIndex+1)
+	if !ok {
+		http.Error(w, "Lesson is replaced by an event", http.StatusBadRequest)
+		return
+	}
 	lesson.Notes = append(lesson.Notes, LessonNote{Time: time.Now().Format("15:04"), Text: text, Student: student})
 	if err := store.saveLessonOverride(date, slotIndex, lesson); err != nil {
 		http.Error(w, "Could not save note", http.StatusInternalServerError)
@@ -919,7 +954,11 @@ func (s *Server) updateLessonNote(w http.ResponseWriter, r *http.Request) {
 
 	store := s.storeFor(r)
 	lessons := store.agenda(date)
-	lesson := lessons[slotIndex]
+	lesson, ok := lessonForSlot(lessons, slotIndex+1)
+	if !ok {
+		http.Error(w, "Lesson is replaced by an event", http.StatusBadRequest)
+		return
+	}
 	if noteIndex >= len(lesson.Notes) {
 		http.Error(w, "Note not found", http.StatusBadRequest)
 		return
@@ -974,10 +1013,16 @@ func (s *Server) saveDayOverride(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	store := s.storeFor(r)
+	lessonSlots, err := parseOverrideLessonSlots(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	override := DayOverride{
-		Title:      title,
-		Notes:      strings.TrimSpace(r.FormValue("notes")),
-		Activities: parseActivities(r),
+		Title:       title,
+		Notes:       strings.TrimSpace(r.FormValue("notes")),
+		Activities:  parseActivities(r),
+		LessonSlots: lessonSlots,
 	}
 	if err := store.addDayOverride(schoolDatesInRange(start, end), override); err != nil {
 		http.Error(w, "Could not save event", http.StatusInternalServerError)
@@ -1008,10 +1053,16 @@ func (s *Server) updateDayOverride(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	store := s.storeFor(r)
+	lessonSlots, err := parseOverrideLessonSlots(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
 	override := DayOverride{
-		Title:      title,
-		Notes:      strings.TrimSpace(r.FormValue("notes")),
-		Activities: parseActivities(r),
+		Title:       title,
+		Notes:       strings.TrimSpace(r.FormValue("notes")),
+		Activities:  parseActivities(r),
+		LessonSlots: lessonSlots,
 	}
 	if err := store.updateDayOverride(date, index, override); err != nil {
 		http.Error(w, "Could not update event", http.StatusInternalServerError)
@@ -1318,6 +1369,40 @@ func parseActivities(r *http.Request) []Activity {
 		activities = append(activities, activity)
 	}
 	return activities
+}
+
+func parseOverrideLessonSlots(r *http.Request) ([]int, error) {
+	if r.FormValue("override_scope") != "lessons" {
+		return nil, nil
+	}
+	seen := make(map[int]bool)
+	lessonSlots := make([]int, 0, len(r.PostForm["lesson_slot"]))
+	for _, raw := range r.PostForm["lesson_slot"] {
+		slotNumber, err := strconv.Atoi(raw)
+		if err != nil || slotNumber < 1 || slotNumber > len(lessonTimes) {
+			return nil, errors.New("invalid lesson period")
+		}
+		if !seen[slotNumber] {
+			lessonSlots = append(lessonSlots, slotNumber)
+			seen[slotNumber] = true
+		}
+	}
+	if len(lessonSlots) == 0 {
+		return nil, errors.New("select at least one lesson period")
+	}
+	sort.Ints(lessonSlots)
+	return lessonSlots, nil
+}
+
+func overrideScopeLabel(lessonSlots []int) string {
+	if len(lessonSlots) == 0 {
+		return "Replaces the whole day"
+	}
+	labels := make([]string, len(lessonSlots))
+	for index, slotNumber := range lessonSlots {
+		labels[index] = strconv.Itoa(slotNumber)
+	}
+	return "Replaces lessons " + strings.Join(labels, ", ")
 }
 
 func pathIndex(raw string, length int) (int, error) {

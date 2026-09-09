@@ -48,12 +48,14 @@
     {{end}}
   </div>
 </section>
-{{else if .Overridden}}
+{{else}}
+{{if .Overridden}}
 <section class="day-override-list">
   {{range .Overrides}}
   <div class="day-override">
     <p class="eyebrow">Special day</p>
     <h2>{{.Title}}</h2>
+    <p class="event-scope">{{.ScopeLabel}}</p>
     {{if .Notes}}<p class="lede">{{.Notes}}</p>{{end}}
     {{if .Activities}}
     <div class="activity-table" role="table" aria-label="Activities">
@@ -64,7 +66,7 @@
     </div>
     {{end}}
     <div class="day-override-actions">
-      <button class="secondary" type="button" data-edit-event data-index="{{.Index}}" data-title="{{.Title}}" data-notes="{{.Notes}}" data-activities="{{.Activities | toJSON}}">Edit event</button>
+      <button class="secondary" type="button" data-edit-event data-index="{{.Index}}" data-title="{{.Title}}" data-notes="{{.Notes}}" data-activities="{{.Activities | toJSON}}" data-lesson-slots="{{.LessonSlots | toJSON}}">Edit event</button>
       <form hx-post="/agenda/{{$.DateInput}}/override/{{.Index}}/clear">
         <button class="secondary" type="submit">Remove event</button>
       </form>
@@ -72,7 +74,8 @@
   </div>
   {{end}}
 </section>
-{{else}}
+{{end}}
+{{if .Lessons}}
 <section class="agenda-workspace">
   <div class="agenda-summary">
     <div><span>Lessons planned</span><strong>{{.TotalCount}}</strong></div>
@@ -87,6 +90,7 @@
   </div>
 </section>
 {{end}}
+{{end}}
 <dialog id="override-dialog">
   <form class="settings-form" id="override-form" hx-post="/agenda/{{.DateInput}}/override">
     <div class="dialog-heading"><div><p class="eyebrow">Special day</p><h2 id="override-dialog-heading">Replace lessons with an event</h2></div><button class="icon-button" type="button" command="close" commandfor="override-dialog" aria-label="Close">×</button></div>
@@ -97,6 +101,14 @@
       <label>From<input type="date" name="start" value="{{.DateInput}}" required></label>
       <label>To<input type="date" name="end" value="{{.DateInput}}"></label>
     </div>
+    <fieldset class="override-scope">
+      <legend>Replaces</legend>
+      <label><input type="radio" name="override_scope" value="day" checked> Whole day</label>
+      <label><input type="radio" name="override_scope" value="lessons"> Selected lessons</label>
+      <div class="override-lesson-slots" id="override-lesson-slots" hidden>
+        {{range $index, $time := .LessonTimes}}<label><input type="checkbox" name="lesson_slot" value="{{add $index 1}}"> <span>Lesson {{add $index 1}}</span><small>{{$time}}</small></label>{{end}}
+      </div>
+    </fieldset>
     <label>Notes<textarea name="notes" rows="4" placeholder="Optional details"></textarea></label>
     <div class="activity-editor">
       <div class="activity-editor-heading"><span>Activities</span><button class="secondary" type="button" id="add-activity">+ Add activity</button></div>
@@ -129,6 +141,7 @@
     const dateRange = document.getElementById('override-date-range');
     const heading = document.getElementById('override-dialog-heading');
     const submitButton = document.getElementById('override-submit');
+    const lessonSlots = document.getElementById('override-lesson-slots');
     let counter = 0;
 
     function addRow(activity) {
@@ -155,10 +168,18 @@
       submitButton.textContent = 'Save event';
       rows.replaceChildren();
       counter = 0;
+      updateScope();
+    }
+
+    function updateScope() {
+      lessonSlots.hidden = form.elements.override_scope.value !== 'lessons';
     }
 
     document.getElementById('add-activity').addEventListener('click', function () {
       addRow();
+    });
+    form.querySelectorAll('[name="override_scope"]').forEach(function (radio) {
+      radio.addEventListener('change', updateScope);
     });
     document.getElementById('add-override').addEventListener('click', resetForm);
     dialog.addEventListener('close', resetForm);
@@ -169,6 +190,12 @@
       resetForm();
       form.elements.title.value = button.dataset.title;
       form.elements.notes.value = button.dataset.notes;
+      const selectedSlots = JSON.parse(button.dataset.lessonSlots || '[]') || [];
+      form.elements.override_scope.value = selectedSlots.length ? 'lessons' : 'day';
+      form.querySelectorAll('[name="lesson_slot"]').forEach(function (checkbox) {
+        checkbox.checked = selectedSlots.includes(Number(checkbox.value));
+      });
+      updateScope();
       form.setAttribute('hx-post', '/agenda/{{.DateInput}}/override/' + button.dataset.index + '/edit');
       htmx.process(form);
       dateRange.hidden = true;
