@@ -73,6 +73,7 @@ func TestYearAndTimetableViews(t *testing.T) {
 	assertContains(t, schedule, "Save timetable")
 	assertContains(t, schedule, "Planner settings")
 	assertContains(t, schedule, "Automatic email delivery")
+	assertContains(t, schedule, "Send next day test")
 }
 
 func TestEmailDeliverySettingsPersist(t *testing.T) {
@@ -767,6 +768,31 @@ func TestScheduledEmailsSendNextDayAndWeekOnlyOnce(t *testing.T) {
 	for _, message := range sender.messages {
 		assertContains(t, string(message.attachment), "Monday fractions")
 	}
+}
+
+func TestSendTestEmailUsesNextSchoolDay(t *testing.T) {
+	store := newStore("")
+	friday := time.Date(2026, time.September, 11, 12, 0, 0, 0, time.Local)
+	monday := time.Date(2026, time.September, 14, 0, 0, 0, 0, time.Local)
+	lesson := store.agenda(monday)[0]
+	lesson.Slot.Topic = "Monday test plan"
+	if err := store.saveLessonOverride(monday, 0, lesson); err != nil {
+		t.Fatal(err)
+	}
+	sender := &recordingEmailSender{}
+	server := &Server{emailSender: sender}
+	if err := server.sendTestEmail(store, "teacher@example.com", friday); err != nil {
+		t.Fatal(err)
+	}
+	if len(sender.messages) != 1 {
+		t.Fatalf("sent %d test emails, want 1", len(sender.messages))
+	}
+	message := sender.messages[0]
+	if message.to != "teacher@example.com" || message.filename != "lehrerin-day-2026-09-14.html" {
+		t.Fatalf("unexpected test email: %+v", message)
+	}
+	assertContains(t, message.subject, "Monday, September 14, 2026")
+	assertContains(t, string(message.attachment), "Monday test plan")
 }
 
 func TestUndoRestoresPreviousLessonAndCapsAt100Entries(t *testing.T) {

@@ -280,6 +280,7 @@ func newServer(dataDir string) http.Handler {
 	protected.HandleFunc("POST /agenda/{date}/override/{index}/clear", server.clearDayOverride)
 	protected.HandleFunc("POST /schedule", server.saveSchedule)
 	protected.HandleFunc("POST /settings", server.saveSettings)
+	protected.HandleFunc("POST /settings/test-email", server.testEmail)
 	protected.HandleFunc("POST /reset", server.resetData)
 	protected.HandleFunc("POST /undo", server.undo)
 	protected.HandleFunc("GET /backup", server.downloadBackup)

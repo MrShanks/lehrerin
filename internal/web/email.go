@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"log"
+	"net/http"
 	"net/mail"
 	"net/smtp"
 	"os"
@@ -178,6 +179,37 @@ func (s *Server) sendScheduledForStore(store *Store, now time.Time) error {
 		}
 	}
 	return nil
+}
+
+func (s *Server) sendTestEmail(store *Store, to string, now time.Time) error {
+	target := nextSchoolDay(now)
+	attachment, filename, _, err := renderDayAttachment(store, target)
+	if err != nil {
+		return err
+	}
+	return s.emailSender.Send(to, "Lehrerin test: plan for "+target.Format("Monday, January 2, 2006"), filename, attachment)
+}
+
+func (s *Server) testEmail(w http.ResponseWriter, r *http.Request) {
+	if s.emailSender == nil {
+		w.Write([]byte("Gmail is not configured on the server."))
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		w.Write([]byte("Could not read the email address."))
+		return
+	}
+	email := strings.TrimSpace(r.FormValue("email"))
+	if !validDeliveryEmail(email) {
+		w.Write([]byte("Enter a valid email address first."))
+		return
+	}
+	if err := s.sendTestEmail(s.storeFor(r), email, time.Now()); err != nil {
+		log.Printf("test email for account %s: %v", accountIDFromRequest(r), err)
+		w.Write([]byte("Test email could not be sent. Check the server mail configuration."))
+		return
+	}
+	w.Write([]byte("Tomorrow's school-day plan was sent. Check your inbox and spam folder."))
 }
 
 func validDeliveryEmail(value string) bool {

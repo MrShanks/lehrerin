@@ -45,7 +45,10 @@
         <label>Email address<input type="email" name="email" value="{{.Email}}" placeholder="teacher@example.com"></label>
         <div class="delivery-row"><label class="ready-toggle"><input type="checkbox" name="daily_email" {{if .DailyEmail}}checked{{end}}> Send next school day</label><label>At<input type="time" name="daily_time" value="{{.DailyTime}}"></label></div>
         <div class="delivery-row"><label class="ready-toggle"><input type="checkbox" name="weekly_email" {{if .WeeklyEmail}}checked{{end}}> Send next school week</label><label>On<select name="weekly_day">{{range .Weekdays}}<option value="{{.}}" {{if eq . $.WeeklyDay}}selected{{end}}>{{.}}</option>{{end}}<option value="Saturday" {{if eq .WeeklyDay "Saturday"}}selected{{end}}>Saturday</option><option value="Sunday" {{if eq .WeeklyDay "Sunday"}}selected{{end}}>Sunday</option></select></label><label>At<input type="time" name="weekly_time" value="{{.WeeklyTime}}"></label></div>
-        <p>Delivery times use Europe/Zurich. {{if .MailConfigured}}Gmail is configured.{{else}}Automatic sending is unavailable until Gmail is configured on the server.{{end}}</p>
+        <div class="email-test-row">
+          <p id="email-test-status" role="status">Delivery times use Europe/Zurich. {{if .MailConfigured}}Gmail is configured.{{else}}Automatic sending is unavailable until Gmail is configured on the server.{{end}}</p>
+          <button class="secondary" type="button" hx-post="/settings/test-email" hx-include="closest form" hx-target="#email-test-status" hx-swap="innerHTML" {{if not .MailConfigured}}disabled title="Configure Gmail on the server first"{{end}}>Send next day test</button>
+        </div>
       </fieldset>
       <div class="form-row"><label>Subjects, one per line<textarea name="subjects" rows="10">{{range .Subjects}}{{.}}
 {{end}}</textarea></label><label>Classes, one per line<textarea name="classes" rows="10">{{range .Classes}}{{.}}
