@@ -1,0 +1,51 @@
+{{define "settings"}}
+<section class="page-heading">
+  <div><p class="eyebrow">Configuration</p><h1>Planner settings</h1><p class="lede">Manage your profile, planning lists, automatic delivery, and local data.</p></div>
+  <div class="settings-status" role="status">
+    <span id="settings-save-status"></span>
+    <span class="htmx-indicator" id="settings-saving">Saving…</span>
+  </div>
+</section>
+<div class="settings-page">
+  <form class="settings-form" hx-post="/settings" hx-trigger="input changed delay:700ms, change" hx-target="#settings-save-status" hx-swap="innerHTML" hx-indicator="#settings-saving">
+    <section class="settings-section">
+      <div class="settings-section-heading"><h2>Profile</h2><p>Shown on your planner and downloaded lesson plans.</p></div>
+      <div class="form-row"><label>Teacher<input name="teacher" value="{{.Teacher}}"></label><label>School<input name="school" value="{{.School}}"></label></div>
+    </section>
+    <section class="settings-section">
+      <div class="settings-section-heading"><h2>Automatic email delivery</h2><p>Receive upcoming plans as HTML attachments.</p></div>
+      <div class="email-settings">
+        <label>Email address<input type="email" name="email" value="{{.Email}}" placeholder="teacher@example.com"></label>
+        <div class="delivery-row"><label class="ready-toggle"><input type="checkbox" name="daily_email" {{if .DailyEmail}}checked{{end}}> Send next school day</label><label>At<input type="time" name="daily_time" value="{{.DailyTime}}"></label></div>
+        <div class="delivery-row"><label class="ready-toggle"><input type="checkbox" name="weekly_email" {{if .WeeklyEmail}}checked{{end}}> Send next school week</label><label>On<select name="weekly_day">{{range .Weekdays}}<option value="{{.}}" {{if eq . $.WeeklyDay}}selected{{end}}>{{.}}</option>{{end}}<option value="Saturday" {{if eq .WeeklyDay "Saturday"}}selected{{end}}>Saturday</option><option value="Sunday" {{if eq .WeeklyDay "Sunday"}}selected{{end}}>Sunday</option></select></label><label>At<input type="time" name="weekly_time" value="{{.WeeklyTime}}"></label></div>
+        <div class="email-test-row">
+          <p id="email-test-status" role="status">Delivery times use Europe/Zurich. {{if .MailConfigured}}Gmail is configured.{{else}}Automatic sending is unavailable until Gmail is configured on the server.{{end}}</p>
+          <button class="secondary" type="button" hx-post="/settings/test-email" hx-include="closest form" hx-target="#email-test-status" hx-swap="innerHTML" {{if not .MailConfigured}}disabled title="Configure Gmail on the server first"{{end}}>Send next day test</button>
+        </div>
+      </div>
+    </section>
+    <section class="settings-section">
+      <div class="settings-section-heading"><h2>Planning lists</h2><p>One entry per line, available throughout your agenda.</p></div>
+      <div class="form-row"><label>Subjects<textarea name="subjects" rows="10">{{range .Subjects}}{{.}}
+{{end}}</textarea></label><label>Classes<textarea name="classes" rows="10">{{range .Classes}}{{.}}
+{{end}}</textarea></label></div>
+      <label>Students<textarea name="students" rows="6">{{range .Students}}{{.}}
+{{end}}</textarea></label>
+    </section>
+  </form>
+  <section class="settings-section data-settings">
+    <div class="settings-section-heading"><h2>Backup and restore</h2><p>Keep a local copy or replace this planner from a previous backup.</p></div>
+    <div class="backup-download"><div><strong>Local backup</strong><p>Download a copy of your planner data to keep locally.</p></div><a class="secondary button-link" href="/backup">Download backup</a></div>
+    <form class="restore-form" hx-post="/restore" hx-encoding="multipart/form-data" hx-confirm="Restoring a backup will replace all of your current planner data. Continue?">
+      <label>Restore a backup<input type="file" name="backup" accept="application/json,.json" required></label>
+      <button class="secondary" type="submit">Restore backup</button>
+    </form>
+  </section>
+  <section class="danger-zone settings-danger">
+    <div><strong>Reset all data</strong><p>Permanently deletes every lesson, note, special day, and setting, restoring the planner to its defaults. This cannot be undone.</p></div>
+    <form hx-post="/reset" hx-confirm="This will permanently delete every lesson, note, special day, and setting, restoring the planner to its defaults. This cannot be undone. Continue?">
+      <button class="danger" type="submit">Reset all data</button>
+    </form>
+  </section>
+</div>
+{{end}}

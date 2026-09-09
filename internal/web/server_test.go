@@ -71,10 +71,16 @@ func TestYearAndTimetableViews(t *testing.T) {
 	assertContains(t, schedule, "Weekly timetable")
 	assertContains(t, schedule, "Monday-1-time")
 	assertContains(t, schedule, "Save timetable")
-	assertContains(t, schedule, "Planner settings")
-	assertContains(t, schedule, "Automatic email delivery")
-	assertContains(t, schedule, "Send next day test")
 	assertContains(t, schedule, "/static/app.css?v=20260909-1")
+	if strings.Contains(schedule, `id="settings-dialog"`) {
+		t.Fatal("settings dialog should not be embedded in application pages")
+	}
+
+	settings := request(t, handler, http.MethodGet, "/settings", nil, cookie)
+	assertContains(t, settings, "Planner settings")
+	assertContains(t, settings, "Automatic email delivery")
+	assertContains(t, settings, "Send next day test")
+	assertContains(t, settings, `href="/settings" aria-current="page"`)
 }
 
 func TestStaticAssetsRequireRevalidation(t *testing.T) {
@@ -96,11 +102,14 @@ func TestEmailDeliverySettingsPersist(t *testing.T) {
 		"email": {"teacher@example.com"}, "daily_email": {"on"}, "daily_time": {"17:30"},
 		"weekly_email": {"on"}, "weekly_day": {"Saturday"}, "weekly_time": {"09:15"},
 	}, cookie)
-	if response.Code != http.StatusNoContent {
+	if response.Code != http.StatusSeeOther {
 		t.Fatalf("settings returned %d: %s", response.Code, response.Body.String())
 	}
+	if got := response.Header().Get("Location"); got != "/settings" {
+		t.Fatalf("settings redirect = %q, want /settings", got)
+	}
 
-	reloaded := request(t, NewPersistentServer(dir), http.MethodGet, "/schedule", nil, cookie)
+	reloaded := request(t, NewPersistentServer(dir), http.MethodGet, "/settings", nil, cookie)
 	assertContains(t, reloaded, `value="teacher@example.com"`)
 	assertContains(t, reloaded, `name="daily_time" value="17:30"`)
 	assertContains(t, reloaded, `value="Saturday" selected`)
@@ -112,6 +121,28 @@ func TestEmailDeliverySettingsPersist(t *testing.T) {
 	if invalid.Code != http.StatusBadRequest {
 		t.Fatalf("invalid delivery email returned %d, want 400", invalid.Code)
 	}
+}
+
+func TestSettingsAutosaveReturnsInlineStatus(t *testing.T) {
+	handler := NewServer()
+	cookie := signUp(t, handler)
+	form := url.Values{
+		"teacher": {"Ms. Rivera"}, "school": {"Central School"},
+		"daily_time": {"17:00"}, "weekly_day": {"Sunday"}, "weekly_time": {"18:00"},
+	}
+	req := httptest.NewRequest(http.MethodPost, "/settings", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Cookie", cookie)
+	req.Header.Set("HX-Request", "true")
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, req)
+
+	if response.Code != http.StatusOK || strings.TrimSpace(response.Body.String()) != "Saved" {
+		t.Fatalf("autosave returned %d with body %q", response.Code, response.Body.String())
+	}
+	settings := request(t, handler, http.MethodGet, "/settings", nil, cookie)
+	assertContains(t, settings, `value="Ms. Rivera"`)
+	assertContains(t, settings, `value="Central School"`)
 }
 
 func TestSchoolYearMarksToday(t *testing.T) {
@@ -367,8 +398,11 @@ func TestResetDataWipesEverything(t *testing.T) {
 		url.Values{"text": {"Struggled with fractions"}, "student": {"Alex Doe"}}, cookie)
 	request(t, handler, http.MethodPost, "/agenda/2026-08-12/override",
 		url.Values{"title": {"School camp"}, "start": {"2026-08-12"}, "end": {"2026-08-12"}}, cookie)
-	request(t, handler, http.MethodPost, "/settings",
+	settingsResponse := requestWithResponse(t, handler, http.MethodPost, "/settings",
 		url.Values{"teacher": {"Ms. Weber"}, "students": {"Alex Doe"}}, cookie)
+	if settingsResponse.Code != http.StatusSeeOther {
+		t.Fatalf("settings returned %d: %s", settingsResponse.Code, settingsResponse.Body.String())
+	}
 
 	request(t, handler, http.MethodPost, "/reset", nil, cookie)
 

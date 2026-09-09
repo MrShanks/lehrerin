@@ -268,6 +268,7 @@ func newServer(dataDir string) http.Handler {
 	protected.HandleFunc("GET /", server.agenda)
 	protected.HandleFunc("GET /year", server.year)
 	protected.HandleFunc("GET /schedule", server.schedule)
+	protected.HandleFunc("GET /settings", server.settings)
 	protected.HandleFunc("GET /notes", server.notes)
 	protected.HandleFunc("GET /review", server.review)
 	protected.HandleFunc("GET /download/day", server.downloadDay)
@@ -730,6 +731,10 @@ func (s *Server) schedule(w http.ResponseWriter, r *http.Request) {
 	s.render(w, "layout", data)
 }
 
+func (s *Server) settings(w http.ResponseWriter, r *http.Request) {
+	s.render(w, "layout", s.baseData(s.storeFor(r), r, "settings"))
+}
+
 func (s *Server) agendaData(store *Store, r *http.Request, date time.Time, subject, class string) pageData {
 	data := s.baseData(store, r, "agenda")
 	data.Date = date.Format("Monday, January 2, 2006")
@@ -1100,8 +1105,11 @@ func (s *Server) saveSettings(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Could not save settings", http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("HX-Redirect", "/schedule")
-	w.WriteHeader(http.StatusNoContent)
+	if r.Header.Get("HX-Request") == "true" {
+		w.Write([]byte("Saved"))
+		return
+	}
+	http.Redirect(w, r, "/settings", http.StatusSeeOther)
 }
 
 func (s *Server) resetData(w http.ResponseWriter, r *http.Request) {
