@@ -23,6 +23,7 @@ For Docker/NAS deployments, configure Gmail SMTP directly under the `lehrerin` s
 ```yaml
 environment:
 	PORT: "8080"
+	TZ: "Europe/Zurich"
 	SMTP_HOST: "smtp.gmail.com"
 	SMTP_PORT: "587"
 	SMTP_USERNAME: "your-account@gmail.com"

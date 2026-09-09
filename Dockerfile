@@ -11,6 +11,6 @@ WORKDIR /app
 COPY --from=builder /out/lehrerin ./lehrerin
 RUN mkdir -p /app/data && chown -R lehrerin:lehrerin /app
 USER lehrerin
-ENV PORT=8080
+ENV PORT=8080 TZ=Europe/Zurich
 EXPOSE 8080
 ENTRYPOINT ["./lehrerin"]

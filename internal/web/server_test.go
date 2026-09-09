@@ -890,6 +890,16 @@ func TestDeliveryTimezoneIsAvailable(t *testing.T) {
 	if offset != 60*60 {
 		t.Fatalf("Europe/Zurich winter offset = %d, want 3600", offset)
 	}
+	summer := time.Date(2026, time.September, 9, 13, 55, 0, 0, time.UTC).In(location)
+	if summer.Hour() != 15 || summer.Minute() != 55 {
+		t.Fatalf("13:55 UTC = %s in Europe/Zurich, want 15:55", summer.Format("15:04"))
+	}
+	if !deliveryDue(summer, "15:55") {
+		t.Fatal("15:55 Zurich should be due at 15:55 Zurich")
+	}
+	if deliveryDue(summer, "16:55") {
+		t.Fatal("16:55 Zurich should not be due at 15:55 Zurich")
+	}
 }
 
 func TestUndoRestoresPreviousLessonAndCapsAt100Entries(t *testing.T) {
