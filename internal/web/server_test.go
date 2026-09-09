@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestAgendaInheritsTemplateAndSavesDailyOverride(t *testing.T) {
@@ -475,6 +476,28 @@ func TestLoginFailuresAndLogout(t *testing.T) {
 	protected := requestWithResponse(t, logoutHandler, http.MethodGet, "/", nil, "")
 	if protected.Code != http.StatusSeeOther || protected.Header().Get("Location") != "/login" {
 		t.Fatalf("logged-out request returned %d with location %q", protected.Code, protected.Header().Get("Location"))
+	}
+}
+
+func TestSessionExpiresAfterOneDay(t *testing.T) {
+	accounts := newAccountManager("")
+	account, err := accounts.signUp("teacher", "password1234", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiredValue := accounts.sessionCookieValue(account.ID, account.SessionVersion, time.Now().Add(-sessionLifetime))
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	req.AddCookie(&http.Cookie{Name: sessionCookieName, Value: expiredValue})
+	response := httptest.NewRecorder()
+	accounts.requireAuth(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})).ServeHTTP(response, req)
+
+	if response.Code != http.StatusSeeOther || response.Header().Get("Location") != "/login" {
+		t.Fatalf("expired session returned %d with location %q", response.Code, response.Header().Get("Location"))
+	}
+	if cookies := response.Result().Cookies(); len(cookies) == 0 || cookies[0].MaxAge != -1 {
+		t.Fatal("expired session did not clear the session cookie")
 	}
 }
 

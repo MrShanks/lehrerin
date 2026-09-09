@@ -58,7 +58,10 @@ type Account struct {
 	SessionVersion int `json:"sessionVersion"`
 }
 
-const sessionCookieName = "lehrerin_session"
+const (
+	sessionCookieName = "lehrerin_session"
+	sessionLifetime   = 24 * time.Hour
+)
 
 var (
 	ErrUsernameTaken      = errors.New("that username is already taken")
@@ -444,23 +447,28 @@ func (m *AccountManager) storeFor(accountID string) *Store {
 	return store
 }
 
-func (m *AccountManager) sessionCookieValue(accountID string, version int) string {
-	payload := accountID + ":" + strconv.Itoa(version)
+func (m *AccountManager) sessionCookieValue(accountID string, version int, issuedAt time.Time) string {
+	payload := accountID + ":" + strconv.Itoa(version) + ":" + strconv.FormatInt(issuedAt.Unix(), 10)
 	mac := hmac.New(sha256.New, m.sessionKey)
 	mac.Write([]byte(payload))
 	return payload + "." + hex.EncodeToString(mac.Sum(nil))
 }
 
-func (m *AccountManager) verifySessionCookie(value string) (accountID string, version int, ok bool) {
+func (m *AccountManager) verifySessionCookie(value string, now time.Time) (accountID string, version int, ok bool) {
 	payload, signature, found := strings.Cut(value, ".")
 	if !found {
 		return "", 0, false
 	}
-	accountID, versionRaw, found := strings.Cut(payload, ":")
-	if !found {
+	parts := strings.Split(payload, ":")
+	if len(parts) != 3 {
 		return "", 0, false
 	}
-	version, err := strconv.Atoi(versionRaw)
+	accountID = parts[0]
+	version, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return "", 0, false
+	}
+	issuedUnix, err := strconv.ParseInt(parts[2], 10, 64)
 	if err != nil {
 		return "", 0, false
 	}
@@ -470,18 +478,22 @@ func (m *AccountManager) verifySessionCookie(value string) (accountID string, ve
 	if !hmac.Equal([]byte(signature), []byte(expected)) {
 		return "", 0, false
 	}
+	issuedAt := time.Unix(issuedUnix, 0)
+	if issuedAt.After(now) || !now.Before(issuedAt.Add(sessionLifetime)) {
+		return "", 0, false
+	}
 	return accountID, version, true
 }
 
 func (m *AccountManager) setSessionCookie(w http.ResponseWriter, accountID string, version int) {
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookieName,
-		Value:    m.sessionCookieValue(accountID, version),
+		Value:    m.sessionCookieValue(accountID, version, time.Now()),
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   true,
 		SameSite: http.SameSiteLaxMode,
-		MaxAge:   60 * 60 * 24 * 30,
+		MaxAge:   int(sessionLifetime / time.Second),
 	})
 }
 
@@ -498,7 +510,7 @@ func (m *AccountManager) requireAuth(next http.Handler) http.Handler {
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
 			return
 		}
-		accountID, version, ok := m.verifySessionCookie(cookie.Value)
+		accountID, version, ok := m.verifySessionCookie(cookie.Value, time.Now())
 		if !ok {
 			clearSessionCookie(w)
 			http.Redirect(w, r, "/login", http.StatusSeeOther)
